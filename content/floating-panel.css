@@ -1,0 +1,327 @@
+/**
+ * 浮动操作面板 CSS 样式
+ * 作为独立的浮窗叠加在排班系统页面上
+ */
+
+/* ========== 浮窗容器 ========== */
+#scheduling-helper-panel {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 99999;
+  width: 380px;
+  max-height: calc(100vh - 120px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  color: #333;
+  user-select: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+#scheduling-helper-panel.visible {
+  display: flex;
+}
+
+#scheduling-helper-panel.minimized {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  min-height: unset;
+}
+
+/* ========== 标题栏（可拖拽） ========== */
+.sh-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #1677ff;
+  color: #fff;
+  cursor: move;
+  flex-shrink: 0;
+  border-radius: 12px 12px 0 0;
+}
+.sh-panel-header .sh-title {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sh-panel-header .sh-actions {
+  display: flex;
+  gap: 4px;
+}
+.sh-panel-header .sh-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.2);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+.sh-panel-header .sh-btn:hover {
+  background: rgba(255,255,255,0.35);
+}
+
+/* ========== 步骤条 ========== */
+.sh-steps-bar {
+  display: flex;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.sh-step-item {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 6px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 10px;
+  white-space: nowrap;
+  color: #999;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.sh-step-item .sh-step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  border: 2px solid #d9d9d9;
+  color: #999;
+}
+.sh-step-item.active {
+  color: #1677ff;
+  border-bottom-color: #1677ff;
+}
+.sh-step-item.active .sh-step-num {
+  background: #1677ff;
+  color: #fff;
+  border-color: #1677ff;
+}
+.sh-step-item.done {
+  color: #52c41a;
+}
+.sh-step-item.done .sh-step-num {
+  background: #52c41a;
+  color: #fff;
+  border-color: #52c41a;
+}
+
+/* ========== 面板内容区 ========== */
+.sh-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+.sh-panel-body label {
+  display: block;
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+.sh-panel-body select,
+.sh-panel-body input[type="text"],
+.sh-panel-body input[type="number"] {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.sh-panel-body select:focus,
+.sh-panel-body input:focus {
+  border-color: #1677ff;
+}
+
+/* ========== 按钮 ========== */
+.sh-btn-action {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.sh-btn-primary { background: #1677ff; color: #fff; }
+.sh-btn-primary:hover { background: #4096ff; }
+.sh-btn-danger { background: #ff4d4f; color: #fff; }
+.sh-btn-danger:hover { background: #ff7875; }
+.sh-btn-success { background: #52c41a; color: #fff; }
+.sh-btn-success:hover { background: #73d13d; }
+.sh-btn-outline { background: #fff; color: #1677ff; border: 1px solid #1677ff; }
+.sh-btn-outline:hover { background: #e6f4ff; }
+.sh-btn-sm { padding: 3px 8px; font-size: 11px; }
+.sh-btn-xs { padding: 2px 6px; font-size: 10px; border-radius: 3px; }
+.sh-btn-block { width: 100%; justify-content: center; }
+.sh-btn-group { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ========== 信息条 ========== */
+.sh-info-bar {
+  padding: 8px 10px;
+  margin: 6px 0;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.sh-info-bar.info { background: #e6f4ff; color: #0958d9; border: 1px solid #91caff; }
+.sh-info-bar.warn { background: #fffbe6; color: #ad6800; border: 1px solid #ffe58f; }
+.sh-info-bar.error { background: #fff2f0; color: #cf1322; border: 1px solid #ffccc7; }
+.sh-info-bar.success { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+
+/* ========== 列表 ========== */
+.sh-doc-list { list-style: none; }
+.sh-doc-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 11px;
+  gap: 8px;
+}
+.sh-doc-list li:hover { background: #fafafa; }
+
+.sh-form-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.sh-form-row > * { flex: 1; }
+
+.sh-divider { border: none; border-top: 1px solid #f0f0f0; margin: 10px 0; }
+
+/* ========== 值班排序 ========== */
+.sh-duty-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
+  cursor: grab;
+  font-size: 11px;
+  user-select: none;
+}
+.sh-duty-row:active { cursor: grabbing; }
+.sh-duty-row .sh-drag-handle { font-size: 14px; color: #bbb; cursor: grab; padding: 0 2px; }
+.sh-duty-row .sh-duty-desc { font-size: 9px; color: #999; text-align: right; flex: 1; }
+
+/* ========== 冲突列表 ========== */
+.sh-conflict-list { list-style: none; }
+.sh-conflict-list li {
+  padding: 6px 8px;
+  margin: 3px 0;
+  background: #fff2f0;
+  border-radius: 6px;
+  font-size: 10px;
+  border: 1px solid #ffccc7;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sh-conflict-list li.resolved {
+  background: #f6ffed;
+  border-color: #b7eb8f;
+}
+
+/* ========== Toast 通知 ========== */
+.sh-toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 999999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sh-toast {
+  padding: 10px 16px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  cursor: pointer;
+  max-width: 320px;
+  animation: shSlideIn 0.3s ease, shFadeOut 0.3s ease 2.5s forwards;
+}
+.sh-toast.success { background: #52c41a; }
+.sh-toast.warn { background: #faad14; color: #333; }
+.sh-toast.error { background: #ff4d4f; }
+@keyframes shSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes shFadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+/* ========== 快捷入口图标 ========== */
+#sh-quick-entry {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  z-index: 99998;
+  width: 36px;
+  height: 72px;
+  background: #1677ff;
+  color: #fff;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-lr;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.15);
+  transition: all 0.2s;
+  opacity: 0.85;
+}
+#sh-quick-entry:hover {
+  opacity: 1;
+  width: 40px;
+  background: #4096ff;
+}
+#sh-quick-entry.hidden {
+  display: none;
+}
+
+/* ========== 适配页面表格的班型色条 ========== */
+.sh-class-color-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 0 0 2px 2px;
+}

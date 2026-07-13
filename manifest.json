@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "排班辅助插件",
+  "version": "1.0.0",
+  "description": "绵阳市第三人民医院 - 科室排班辅助填表工具",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://10.66.66.151/*",
+    "http://localhost/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://10.66.66.151/app/attendance/schedules/hospital*",
+        "http://localhost/*"
+      ],
+      "js": [
+        "lib/algorithm.js",
+        "lib/api.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/floating-panel.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "排班辅助插件"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "lib/algorithm.js",
+        "content/floating-panel.html",
+        "content/floating-panel.css",
+        "icons/*"
+      ],
+      "matches": [
+        "http://10.66.66.151/*",
+        "http://localhost/*"
+      ]
+    }
+  ]
+}
