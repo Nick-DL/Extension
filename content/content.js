@@ -80,12 +80,16 @@
   }
 
   function onEnabled() {
+    console.log('[排班辅助] 🟢 onEnabled() 开始执行');
     showToast('排班辅助插件已启用', 'success');
     document.getElementById('sh-quick-entry').classList.remove('hidden');
     restoreFetch = ScheduleAPI.interceptScheduleAPI();
+    console.log('[排班辅助] API拦截已启用');
     window.addEventListener('scheduling-api-blocked', () => showToast('主页面排班修改已被拦截，请通过辅助面板操作', 'warn'));
     detectWeekInfo();
+    console.log('[排班辅助] 检测到周信息:', JSON.stringify(weekInfo));
     refreshAllData().then(() => {
+      console.log('[排班辅助] ✅ refreshAllData() 完成, 医生数=' + state.doctors.length);
       originalData = JSON.parse(JSON.stringify({
         doctors: state.doctors, outpatientGeneral: state.outpatientGeneral,
         outpatientSimple: state.outpatientSimple, outpatientGaoxin: state.outpatientGaoxin,
@@ -96,7 +100,8 @@
       syncStateToBackground();
       chrome.runtime.sendMessage({ type: 'UPDATE_WEEK_INFO', weekInfo });
       togglePanel(true);
-    }).catch(err => { console.error('[排班辅助] 数据加载失败:', err); showToast('数据加载失败', 'error'); });
+      console.log('[排班辅助] ✅ 面板已打开, 当前步骤=' + state.currentStep);
+    }).catch(err => { console.error('[排班辅助] ❌ 数据加载失败:', err.message, err.stack); showToast('数据加载失败: ' + err.message, 'error'); });
   }
 
   function onDisabled() {
@@ -131,35 +136,119 @@
   // ==================== 数据加载 ====================
   async function refreshAllData() {
     try {
+      console.log('[排班辅助] ========== 开始加载数据 ==========');
+      console.log('[排班辅助] 周信息:', JSON.stringify(weekInfo));
+      console.log('[排班辅助] ScheduleAPI 可用?', typeof ScheduleAPI !== 'undefined');
+      console.log('[排班辅助] ScheduleAlgorithm 可用?', typeof ScheduleAlgorithm !== 'undefined');
+
+      // --- 1. 加载班型 ---
+      console.log('[排班辅助] --- 步骤1: 获取班型 (fetchClasses) ---');
       const cr = await ScheduleAPI.fetchClasses();
+      console.log('[排班辅助] fetchClasses 返回: error=' + cr.error + ', data类型=' + (cr.data ? (Array.isArray(cr.data) ? 'Array(' + cr.data.length + ')' : typeof cr.data) : 'null'));
       if (!cr.error && cr.data) {
         const cls = Array.isArray(cr.data) ? cr.data : (cr.data.rows || cr.data.list || []);
+        console.log('[排班辅助] 解析后班型数量:', cls.length);
         classMap = {}; classIdMap = {};
         cls.forEach(c => { const n = c.className || c.name || ''; const id = c.id || c.classId || ''; if (n && id) { classMap[n] = String(id); classIdMap[String(id)] = n; } });
+        console.log('[排班辅助] classMap:', JSON.stringify(classMap));
+      } else {
+        console.warn('[排班辅助] ⚠️ 获取班型失败或数据为空! cr.error=' + cr.error + ', cr.data=' + JSON.stringify(cr.data) + ', cr.message=' + cr.message);
       }
+
+      // --- 2. 加载院区 ---
+      console.log('[排班辅助] --- 步骤2: 获取院区 (fetchLocations) ---');
       const lr = await ScheduleAPI.fetchLocations();
-      if (!lr.error && lr.data) { const locs = Array.isArray(lr.data) ? lr.data : (lr.data.rows || lr.data.list || []); if (locs.length) locationId = String(locs[0].id || locs[0].locationId || ''); }
-      const er = await ScheduleAPI.fetchEmployees({ from: weekInfo.monday, to: getSunday(weekInfo.monday) });
-      if (!er.error && er.data) { const emps = Array.isArray(er.data) ? er.data : (er.data.rows || er.data.list || []); state.doctors = ScheduleAPI.buildDoctorsFromAPI(emps); }
-      if (state.doctors.length) {
-        const sr = await ScheduleAPI.fetchEmpSchedules({ empIds: state.doctors.map(d => d.id), from: weekInfo.monday, to: getSunday(weekInfo.monday) });
-        if (!sr.error && sr.data) parseSchedulesFromAPI(sr.data);
+      console.log('[排班辅助] fetchLocations 返回: error=' + lr.error + ', data类型=' + (lr.data ? (Array.isArray(lr.data) ? 'Array(' + lr.data.length + ')' : typeof lr.data) : 'null'));
+      if (!lr.error && lr.data) {
+        const locs = Array.isArray(lr.data) ? lr.data : (lr.data.rows || lr.data.list || []);
+        console.log('[排班辅助] 院区数量:', locs.length);
+        if (locs.length) {
+          locationId = String(locs[0].id || locs[0].locationId || '');
+          console.log('[排班辅助] 使用院区ID:', locationId);
+        }
+      } else {
+        console.warn('[排班辅助] ⚠️ 获取院区失败或数据为空! lr.error=' + lr.error + ', lr.message=' + lr.message);
       }
+
+      // --- 3. 加载员工 ---
+      console.log('[排班辅助] --- 步骤3: 获取员工 (fetchEmployees) ---');
+      const er = await ScheduleAPI.fetchEmployees({ from: weekInfo.monday, to: getSunday(weekInfo.monday) });
+      console.log('[排班辅助] fetchEmployees 返回: error=' + er.error + ', data类型=' + (er.data ? (Array.isArray(er.data) ? 'Array(' + er.data.length + ')' : typeof er.data) : 'null'));
+      if (!er.error && er.data) {
+        const emps = Array.isArray(er.data) ? er.data : (er.data.rows || er.data.list || []);
+        console.log('[排班辅助] 原始员工数量:', emps.length);
+        if (emps.length > 0) {
+          console.log('[排班辅助] 第一条员工数据示例:', JSON.stringify(emps[0]));
+        }
+        state.doctors = ScheduleAPI.buildDoctorsFromAPI(emps);
+        console.log('[排班辅助] 过滤后医生数量:', state.doctors.length);
+        if (state.doctors.length > 0) {
+          console.log('[排班辅助] 第一个医生:', JSON.stringify(state.doctors[0]));
+        }
+      } else {
+        console.warn('[排班辅助] ⚠️ 获取员工失败或数据为空! er.error=' + er.error + ', er.message=' + er.message);
+      }
+
+      // --- 4. 加载排班数据 ---
+      if (state.doctors.length) {
+        const empIds = state.doctors.map(d => d.id);
+        console.log('[排班辅助] --- 步骤4: 获取排班数据 (fetchEmpSchedules) ---');
+        console.log('[排班辅助] 请求 empIds 前10个:', empIds.slice(0, 10));
+        const sr = await ScheduleAPI.fetchEmpSchedules({ empIds: empIds, from: weekInfo.monday, to: getSunday(weekInfo.monday) });
+        console.log('[排班辅助] fetchEmpSchedules 返回: error=' + sr.error + ', data类型=' + (sr.data ? (Array.isArray(sr.data) ? 'Array(' + sr.data.length + ')' : typeof sr.data) : 'null'));
+        if (!sr.error && sr.data) {
+          const scheds = Array.isArray(sr.data) ? sr.data : (sr.data.rows || sr.data.list || []);
+          console.log('[排班辅助] 排班记录数:', scheds.length);
+          if (scheds.length > 0) {
+            console.log('[排班辅助] 第一条排班记录:', JSON.stringify(scheds[0]));
+          }
+          parseSchedulesFromAPI(sr.data);
+          console.log('[排班辅助] 解析后 outpatientGeneral 天数:', Object.keys(state.outpatientGeneral).length);
+          console.log('[排班辅助] 解析后 dutyAssigned 人数:', Object.keys(state.dutyAssigned).length);
+          console.log('[排班辅助] 解析后 special 人数:', Object.keys(state.special).length);
+        } else {
+          console.warn('[排班辅助] ⚠️ 获取排班数据失败或为空! sr.error=' + sr.error + ', sr.message=' + sr.message);
+        }
+      } else {
+        console.warn('[排班辅助] ⚠️ 跳过步骤4: 员工列表为空');
+      }
+
+      // --- 5. 上周数据 ---
+      console.log('[排班辅助] --- 步骤5: 加载上周数据 ---');
       await loadPrevWeekData();
-      if (!state.dutyOrder || state.dutyOrder.length !== 8) state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
-    } catch (err) { console.error('[排班辅助] 数据刷新异常:', err); }
+
+      if (!state.dutyOrder || state.dutyOrder.length !== 8) {
+        state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
+        console.log('[排班辅助] 默认值班序列:', state.dutyOrder);
+      }
+      console.log('[排班辅助] ========== 数据加载完成 ==========');
+    } catch (err) {
+      console.error('[排班辅助] ❌ 数据刷新异常:', err.message, err.stack);
+    }
   }
 
   function parseSchedulesFromAPI(data) {
     const scheds = Array.isArray(data) ? data : (data.rows || data.list || []);
+    console.log('[排班辅助] parseSchedulesFromAPI: 输入记录数=' + scheds.length);
     state.outpatientGeneral = {}; state.dutyAssigned = {}; state.special = {};
     for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
     const m = new Date(weekInfo.monday); const d2i = {};
     for (let d = 0; d < 7; d++) { const dt = new Date(m); dt.setDate(m.getDate() + d); d2i[dt.toISOString().slice(0, 10)] = d; }
+    console.log('[排班辅助] 日期→索引映射:', JSON.stringify(d2i));
+
+    var parsedCount = 0, skippedCount = 0;
     for (let r of scheds) {
       const eid = String(r.empId || r.employeeId || ''), wd = r.workDate || r.date || '';
       const cn = classIdMap[String(r.classId || r.scheduleClassId || '')] || r.className || '';
-      const di = d2i[wd]; if (di === undefined || !eid || !cn) continue;
+      const di = d2i[wd];
+      if (di === undefined || !eid || !cn) {
+        skippedCount++;
+        if (skippedCount <= 3) {
+          console.warn('[排班辅助] parseSchedulesFromAPI 跳过记录: eid=' + eid + ' date=' + wd + ' className=' + cn + ' dayIdx=' + di + ' classId=' + (r.classId || r.scheduleClassId));
+        }
+        continue;
+      }
+      parsedCount++;
       const sl = r.slot || r.ampm || r.timeSlot || 'am';
       if (A.CLINIC_TYPES.includes(cn)) {
         if (cn === '总院门诊') { if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null }; state.outpatientGeneral[di][sl] = eid; }
@@ -173,6 +262,12 @@
         state.dutyAssigned[eid][di][sl] = cn;
       }
     }
+    console.log('[排班辅助] parseSchedulesFromAPI 结果: 成功解析=' + parsedCount + ', 跳过=' + skippedCount +
+      ', 门诊记录=' + Object.values(state.outpatientGeneral).filter(g => g.am || g.pm).length +
+      ', 高新门诊=' + state.outpatientGaoxin.length +
+      ', 梓潼门诊=' + state.outpatientZitong.length +
+      ', 值班医生=' + Object.keys(state.dutyAssigned).length +
+      ', 特殊安排=' + Object.keys(state.special).length);
   }
 
   async function loadPrevWeekData() {

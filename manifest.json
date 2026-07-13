@@ -52,6 +52,7 @@
     {
       "resources": [
         "lib/algorithm.js",
+        "lib/bridge.js",
         "content/floating-panel.css"
       ],
       "matches": [
