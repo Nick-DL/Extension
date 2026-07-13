@@ -277,10 +277,28 @@
   cursor: grab;
   font-size: 11px;
   user-select: none;
+  transition: opacity 0.25s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .sh-duty-row:active { cursor: grabbing; }
-.sh-duty-row .sh-drag-handle { font-size: 14px; color: #bbb; cursor: grab; padding: 0 2px; }
-.sh-duty-row .sh-duty-desc { font-size: 9px; color: #999; text-align: right; flex: 1; }
+.sh-duty-row .sh-drag-handle { font-size: 14px; color: #bbb; cursor: grab; padding: 0 2px; letter-spacing: -2px; }
+.sh-duty-row .sh-duty-desc { font-size: 9px; color: #666; text-align: right; flex: 1; min-width: 120px; line-height: 1.3; }
+
+/* 拖拽动画：来源行变淡 */
+.sh-duty-row.drag-src-fading {
+  opacity: 0.2;
+}
+
+/* 拖拽动画：插入上方（目标行上边框渐变） */
+.sh-duty-row.drag-insert-above {
+  border-top: 3px solid #1677ff !important;
+  box-shadow: 0 -4px 8px rgba(22, 119, 255, 0.3);
+}
+
+/* 拖拽动画：插入下方（目标行下边框渐变） */
+.sh-duty-row.drag-insert-below {
+  border-bottom: 3px solid #1677ff !important;
+  box-shadow: 0 4px 8px rgba(22, 119, 255, 0.3);
+}
 
 /* ========== 冲突列表 ========== */
 .sh-conflict-list { list-style: none; }

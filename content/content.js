@@ -29,7 +29,7 @@
   let restoreFetch = null, classMap = {}, classIdMap = {}, locationId = '';
   let originalData = null;
   let weekInfo = { year: new Date().getFullYear(), week: 1, monday: '' };
-  let dragSrcIdx = null;
+  let dragSrcIdx = null, dragOpacityTimer = null;
 
   // ==================== 工具函数 ====================
   function getDoctor(id) { return A.getDoctor(state.doctors, id); }
@@ -264,9 +264,13 @@
         case 'removeZitong': removeZitong(+ds.idx); break;
         case 'addSimple': addSimple(); break;
         case 'removeSimple': removeSimple(+ds.idx); break;
+        case 'exportOutpatient': exportOutpatientJSON(); break;
+        case 'importOutpatient': importOutpatientJSON(); break;
+        case 'clearOutpatient': clearOutpatient(); break;
         case 'renderSpecialForm': renderSpecialDocForm(); break;
         case 'toggleAllSpecial': toggleAllSpecial(ds.on === 'true', ds.doc); break;
         case 'toggleWorkdaySpecial': toggleWorkdaySpecial(ds.doc); break;
+        case 'toggleSlotSpecial': toggleSlotSpecial(ds.doc, ds.slot); break;
         case 'batchSpecial': batchSpecial(ds.doc); break;
         case 'batchClearSpecial': batchClearSpecial(ds.doc); break;
         case 'resetDutyOrder': resetDutyOrder(); break;
@@ -276,6 +280,8 @@
         case 'fillEmpty': fillEmpty(); break;
         case 'syncTrainees': syncTrainees(); break;
         case 'submitAll': submitAllChanges(); break;
+        case 'exportFull': exportFullScheduleJSON(); break;
+        case 'importFull': importFullScheduleJSON(); break;
       }
     });
 
@@ -294,16 +300,79 @@
       }
     });
 
-    // 拖拽代理
+    // 拖拽代理 — 完整动画版（延时变淡 + 渐变边框指示）
     panel.addEventListener('dragstart', (e) => {
       const el = e.target.closest('[data-action="dutyDrag"]'); if (!el) return;
       dragSrcIdx = +el.dataset.idx;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragSrcIdx);
+      // 延迟0.2s后将原位置变为更透明
+      if (dragOpacityTimer) { clearTimeout(dragOpacityTimer); dragOpacityTimer = null; }
+      dragOpacityTimer = setTimeout(() => {
+        el.classList.add('drag-src-fading');
+      }, 200);
     });
 
-    panel.addEventListener('dragover', (e) => { e.preventDefault(); });
+    panel.addEventListener('dragend', (e) => {
+      // 清理所有拖拽视觉状态
+      if (dragOpacityTimer) { clearTimeout(dragOpacityTimer); dragOpacityTimer = null; }
+      panel.querySelectorAll('.sh-duty-row').forEach(r => {
+        r.classList.remove('drag-src-fading', 'drag-insert-above', 'drag-insert-below');
+        r.style.opacity = '';
+      });
+    });
+
+    panel.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const row = e.target.closest('[data-action="dutyDrag"]');
+      if (!row || dragSrcIdx === null) return;
+
+      // 清除所有行的指示状态
+      panel.querySelectorAll('.sh-duty-row').forEach(r => {
+        r.classList.remove('drag-insert-above', 'drag-insert-below');
+      });
+
+      const targetIdx = +row.dataset.idx;
+      if (isNaN(targetIdx)) return;
+
+      // 根据拖拽方向显示插入指示
+      if (dragSrcIdx > targetIdx) {
+        // 向上拖：目标行上边框 + 上一行下边框 同时闪烁
+        row.classList.add('drag-insert-above');
+        const prevRow = panel.querySelector(`.sh-duty-row[data-idx="${targetIdx - 1}"]`);
+        if (prevRow) prevRow.classList.add('drag-insert-below');
+      } else if (dragSrcIdx < targetIdx) {
+        // 向下拖：目标行下边框 + 下一行上边框 同时闪烁
+        row.classList.add('drag-insert-below');
+        const nextRow = panel.querySelector(`.sh-duty-row[data-idx="${targetIdx + 1}"]`);
+        if (nextRow) nextRow.classList.add('drag-insert-above');
+      }
+    });
+
+    panel.addEventListener('dragleave', (e) => {
+      const row = e.target.closest('[data-action="dutyDrag"]');
+      if (row && !row.contains(e.relatedTarget)) {
+        row.classList.remove('drag-insert-above', 'drag-insert-below');
+        const idx = +row.dataset.idx;
+        if (!isNaN(idx)) {
+          const prevRow = panel.querySelector(`.sh-duty-row[data-idx="${idx - 1}"]`);
+          if (prevRow) prevRow.classList.remove('drag-insert-above', 'drag-insert-below');
+          const nextRow = panel.querySelector(`.sh-duty-row[data-idx="${idx + 1}"]`);
+          if (nextRow) nextRow.classList.remove('drag-insert-above', 'drag-insert-below');
+        }
+      }
+    });
 
     panel.addEventListener('drop', (e) => {
       e.preventDefault();
+      // 清理所有拖拽视觉状态
+      if (dragOpacityTimer) { clearTimeout(dragOpacityTimer); dragOpacityTimer = null; }
+      panel.querySelectorAll('.sh-duty-row').forEach(r => {
+        r.classList.remove('drag-src-fading', 'drag-insert-above', 'drag-insert-below');
+        r.style.opacity = '';
+      });
+
       const el = e.target.closest('[data-action="dutyDrag"]'); if (!el || dragSrcIdx === null) return;
       const targetIdx = +el.dataset.idx; if (dragSrcIdx === targetIdx) { dragSrcIdx = null; return; }
       const order = state.dutyOrder || [];
@@ -345,7 +414,7 @@
   // ===== S1: 人员 =====
   function renderS1(body) {
     const docs = state.doctors;
-    let h = `<div class="sh-info-bar info">💡 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员（护理体系不参与）。</div>`;
+    let h = `<div class="sh-info-bar info">💡 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员。</div>`;
     h += `<div class="sh-subtitle">📋 人员列表 <span style="font-size:10px;color:#999;font-weight:400;">(${docs.length}人)</span></div>`;
     h += `<ul class="sh-doc-list">`;
     for (let d of docs) {
@@ -360,7 +429,7 @@
     h += `</ul>`;
     h += `<div class="sh-divider"></div>`;
     h += `<div class="sh-subtitle">📅 工作日 / 节假日设定</div>`;
-    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#1677ff;">蓝色=工作日</span>，灰色=节假日。周末默认设为节假日。</div>`;
+    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#1677ff;">蓝色=工作日</span>，灰色=节假日。</div>`;
     h += `<div class="sh-workday-row">`;
     for (let d = 0; d < 7; d++) { const wd = (state.workdayConfig || [])[d]; h += `<button class="sh-btn-action sh-btn-sm ${wd ? 'sh-btn-primary' : 'sh-btn-outline'}" data-action="toggleWorkday" data-day="${d}">${A.DAYS[d]}</button>`; }
     h += `</div>`;
@@ -370,7 +439,7 @@
 
   // ===== S2: 门诊 =====
   function renderS2(body) {
-    let h = `<div class="sh-info-bar info">💡 门诊分为四类管理，具有<b>最高优先级</b>。<br>· 总院门诊 每天上、下午<br>· 简易门诊 时间不固定（表格中显示为总院门诊）<br>· 高新门诊 周内上午<br>· 梓潼门诊 每两周周三上午</div>`;
+    let h = `<div class="sh-info-bar info">💡 四类门诊分别管理。<br>· 总院门诊 每天上、下午<br>· 简易门诊 时间不固定（表格中显示为总院门诊）<br>· 高新门诊 周内上午<br>· 梓潼门诊 周三上午</div>`;
     // 总院门诊
     h += `<div class="sh-subtitle sh-clinic-title-general">🏥 总院门诊</div>`;
     for (let d = 0; d < 7; d++) { const gen = state.outpatientGeneral[d] || { am: null, pm: null }; h += `<div style="margin-bottom:4px;font-size:11px;padding:4px 6px;background:#fafafa;border-radius:4px;"><strong>${A.DAYS[d]}</strong><div class="sh-form-row">`;
@@ -387,6 +456,12 @@
     h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-general">🏥 简易门诊 <span style="font-size:10px;color:#999;font-weight:400;">（表格中显示为总院门诊）</span></div><div id="sh-simple-rows">`;
     (state.outpatientSimple || []).forEach((it, i) => { h += renderSmRow(i, it); });
     h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addSimple">➕ 添加简易门诊</button>`;
+    // 导出/导入/清空按钮
+    h += `<div class="sh-divider"></div><div class="sh-btn-group">`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="exportOutpatient">📤 导出配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importOutpatient">📥 导入配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearOutpatient">🗑 清空门诊</button>`;
+    h += `</div>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 → 特殊安排</button></div>`;
     body.innerHTML = h;
   }
@@ -396,7 +471,7 @@
 
   // ===== S3: 特殊安排 =====
   function renderS3(body) {
-    let h = `<div class="sh-info-bar info">💡 为每位医生单独设置特殊安排。<br>选择医生 → 勾选时段 → 批量应用类型。<br>类型包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
+    let h = `<div class="sh-info-bar info">💡 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
     h += `<label>👨‍⚕️ 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d=>`<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 → 值班排班</button></div>`;
     body.innerHTML = h;
@@ -407,7 +482,7 @@
     const doc = getDoctor(did); if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {};
     let h = `<div class="sh-step-section">`;
     h += `<div class="sh-subtitle" style="margin-top:0;">👨‍⚕️ ${doc.name} <span style="font-size:10px;color:#999;font-weight:400;">#${doc.number}</span></div>`;
-    h += `<div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日全选</button></div>`;
+    h += `<div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="am">上午全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="pm">下午全选</button></div>`;
     h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除选中</button></div>`;
     for (let d = 0; d < 7; d++) { const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:3px;padding:5px 8px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:30px;">${A.DAYS[d]}</strong>`;
       for (let sl of A.SLOTS) h += `<label style="display:flex;align-items:center;gap:2px;flex:1;font-size:9px;cursor:pointer;"><input type="checkbox" class="sh-special-chk" data-doc="${did}" data-day="${d}" data-slot="${sl}">${A.SLOT_LABELS[sl]}<select data-action="updateSpecial" data-doc="${did}" data-day="${d}" data-slot="${sl}" style="flex:1;font-size:10px;"><option value="">—</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}" ${sp[sl]===t?'selected':''}>${t}</option>`).join('')}</select></label>`;
@@ -420,7 +495,7 @@
   function renderS4(body) {
     if (!state.dutyOrder || state.dutyOrder.length !== 8) state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
     const order = state.dutyOrder || [], pool = A.getDutyDoctorPool(state.doctors), flags = state.baiban1Flags || [];
-    let h = `<div class="sh-info-bar info">💡 值班为8排轮转制（中班→值班→夜休）。<br>· 按住 ⋮⋮ 拖拽可调整医生顺序<br>· 节假日中班自动转为休假<br>· 已有安排不会被覆盖<br>· 重新执行前请先<b>清空值班</b></div>`;
+    let h = `<div class="sh-info-bar info">💡· 按住 ⋮⋮ 拖拽调整顺序。<br>· 节假日的中班自动转为休假。<br>· 已有安排不会被覆盖，安排后与门诊等冲突时，相应格子会闪烁提示。<br>· 重新执行自动排班，请先点清空按钮。</div>`;
     h += `<div class="sh-subtitle">📋 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id=>id&&getDoctor(id)).length}/8)</span></div>`;
     h += `<div id="sh-duty-order">`;
     for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d=>`<option value="${d.id}" ${did===d.id?'selected':''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
@@ -438,32 +513,57 @@
   // ===== S5: 确认 =====
   function renderS5(body) {
     const flags = state.baiban1Flags || [], trainees = state.doctors.filter(d => d.type === 'trainee');
-    let h = `<div class="sh-info-bar info">💡 处理冲突、规培生同步、一键填空，最后提交所有修改到系统。</div>`;
-    // (一) 冲突处理
-    h += `<div class="sh-subtitle">（一）冲突处理</div>`;
-    if (flags.length) { h += `<ul class="sh-conflict-list">`;
-      for (let f of flags) { const r = !!f.resolvedBy; h += `<li class="${r?'resolved':''}"><span>${r?'ℹ️':'⚠️'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${r?'':`<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`; }
-      h += `</ul>`; } else { h += `<div class="sh-info-bar success">✅ 所有冲突已解决</div>`; }
+    let h = `<div class="sh-info-bar info">💡 点击下方"分配白1"按钮，可快速安排白班1！</div>`;
 
-    // (二) 一键填空
-    h += `<div class="sh-subtitle">（二）一键填补空缺</div>`;
-    h += `<div class="sh-help-text">工作日空白 → <b style="color:#2196f3;">白班普</b> · 节假日空白 → <b style="color:#999;">休假</b></div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty">🪣 一键填空（白班普 / 休）</button>`;
+    // ===== （一）调整冲突 =====
+    h += `<div class="sh-subtitle" style="font-size:13px;color:#333;">（一）调整冲突</div>`;
+    if (flags.length) {
+      h += `<div class="sh-info-bar warn">⚠️ ${flags.length}个冲突可能需要安排白班1</div><ul class="sh-conflict-list">`;
+      for (let f of flags) {
+        const resolved = !!f.resolvedBy;
+        h += `<li class="${resolved ? 'resolved' : ''}" style="${resolved ? 'background:#f5f5f5;border-color:#d9d9d9;text-decoration:none;opacity:1;' : ''}"><span>${resolved ? 'ℹ️' : '⚠️'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${resolved ? '' : `<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`;
+      }
+      h += `</ul>`;
+    } else {
+      h += `<div class="sh-info-bar success">✅ 所有冲突已解决！</div>`;
+    }
 
-    // (三) 规培生同步
+    // ===== （二）周末值班补休 =====
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（二）周末值班补休</div>`;
+    const wkDutyDocs = A.getWeekendDutyDoctors(state);
+    if (wkDutyDocs.length > 0) {
+      const names = wkDutyDocs.map(d => d.name).join('、');
+      h += `<div class="sh-info-bar info" style="font-size:10px;">${names} 节假日参与值班，请在本周工作日为其分别找一个人员充足的下午安排休假。</div>`;
+    } else {
+      h += `<div class="sh-help-text">本周无人在节假日值班，无需安排补休。</div>`;
+    }
+
+    // ===== （三）一键填补空缺 =====
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（三）一键填补空缺</div>`;
+    h += `<div class="sh-help-text">依据设定的工作日/节假日：<br>工作日→<b style="color:#2196f3;">白班普</b> · 节假日→<b style="color:#999;">休假</b></div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty" style="margin-bottom:8px;">🪣 一键填空（白班普/休）</button>`;
+
+    // ===== （四）规培生一键安排 =====
     if (trainees.length) {
-      h += `<div class="sh-subtitle">（三）规培生一键安排</div>`;
-      h += `<div class="sh-help-text">为 ${trainees.map(d=>d.name).join('、')} 应用对应导师的排班（已有安排不覆盖，门诊/白班1不跟随）。</div>`;
+      h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（四）规培生一键安排</div>`;
+      h += `<div class="sh-help-text">为 ${trainees.map(d => d.name).join('、')} 应用对应导师的排班（已设定的安排不会被覆盖）。</div>`;
       h += `<button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees">🔄 为规培生应用导师排班</button>`;
     }
 
+    // ===== 流程结束 =====
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:14px;color:#333;">✅ 排班流程结束！</div>`;
+
     // 统计
     const stats = A.computeWeekStats(state);
-    h += `<div class="sh-divider"></div><div class="sh-subtitle">📊 本周排班统计</div>`;
-    h += `<div class="sh-stats-wrap">${Object.entries(stats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="sh-stat-tag" style="background:${A.TYPE_COLORS[k]}18;border-color:${A.TYPE_COLORS[k]}44;color:${A.TYPE_COLORS[k]};">${k}: ${v}次</span>`).join('')||'<span style="font-size:10px;color:#999;">暂无数据</span>'}</div>`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle">📊 本周统计</div>`;
+    h += `<div class="sh-stats-wrap">${Object.entries(stats).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="sh-stat-tag" style="background:${A.TYPE_COLORS[k]}18;border-color:${A.TYPE_COLORS[k]}44;color:${A.TYPE_COLORS[k]};">${k}: ${v}次</span>`).join('') || '<span style="font-size:10px;color:#999;">暂无数据</span>'}</div>`;
 
-    // 提交
-    h += `<div class="sh-divider"></div><button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll">✅ 提交所有修改到系统</button>`;
+    // 导出 / 导入 / 提交
+    h += `<div class="sh-btn-group" style="margin-top:10px;">`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="exportFull">📤 导出完整配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importFull">📥 导入完整配置</button>`;
+    h += `</div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll" style="margin-top:8px;">✅ 提交所有修改到系统</button>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="4">← 上一步</button></div>`;
     body.innerHTML = h;
   }
@@ -480,9 +580,53 @@
   function addSimple() { if (!state.outpatientSimple) state.outpatientSimple = []; state.outpatientSimple.push({ dayIdx: null, doctorId: null, slot: null }); renderPanel(); }
   function updateSimple(i, f, v) { if (!state.outpatientSimple) state.outpatientSimple = []; if (!state.outpatientSimple[i]) state.outpatientSimple[i] = { dayIdx: null, doctorId: null, slot: null }; state.outpatientSimple[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); }
   function removeSimple(i) { state.outpatientSimple.splice(i, 1); renderPanel(); }
+
+  function clearOutpatient() {
+    if (!confirm('清空所有门诊安排？')) return;
+    state.outpatientGeneral = {}; state.outpatientSimple = []; state.outpatientGaoxin = []; state.outpatientZitong = [];
+    for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
+    renderPanel(); syncStateToBackground(); showToast('门诊安排已清空', 'success');
+  }
+
+  function exportOutpatientJSON() {
+    const data = {
+      version: 1, type: 'outpatient', exportedAt: new Date().toISOString(),
+      outpatientGeneral: state.outpatientGeneral || {},
+      outpatientSimple: state.outpatientSimple || [],
+      outpatientGaoxin: state.outpatientGaoxin || [],
+      outpatientZitong: state.outpatientZitong || []
+    };
+    downloadJSON(data, `门诊安排_${new Date().toISOString().slice(0, 10)}.json`);
+    showToast('门诊配置已导出', 'success');
+  }
+
+  function importOutpatientJSON() {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = '.json';
+    input.addEventListener('change', function (e) {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (ev) {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (data.type !== 'outpatient' || !data.version) { showToast('无效的门诊配置文件', 'error'); return; }
+          if (!confirm('导入门诊安排？当前数据将被替换。')) return;
+          state.outpatientGeneral = data.outpatientGeneral || {};
+          state.outpatientSimple = data.outpatientSimple || [];
+          state.outpatientGaoxin = data.outpatientGaoxin || [];
+          state.outpatientZitong = data.outpatientZitong || [];
+          renderPanel(); syncStateToBackground();
+          showToast('门诊安排已导入', 'success');
+        } catch (err) { showToast('JSON解析失败: ' + err.message, 'error'); }
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+    input.click();
+  }
   function updateSpecial(did, di, sl, t) { if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = t || null; syncStateToBackground(); }
   function toggleAllSpecial(on, did) { document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]`).forEach(cb => cb.checked = on); }
   function toggleWorkdaySpecial(did) { document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]`).forEach(cb => { cb.checked = (state.workdayConfig || [])[+cb.dataset.day]; }); }
+  function toggleSlotSpecial(did, slot) { document.querySelectorAll(`.sh-special-chk[data-doc="${did}"][data-slot="${slot}"]`).forEach(cb => { cb.checked = true; }); }
   function batchSpecial(did) { const t = document.getElementById('sh-batch-special-type')?.value; if (!t) { showToast('请选择类型', 'warn'); return; } const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = t; }); renderSpecialDocForm(); syncStateToBackground(); showToast(`已应用 ${t} ×${chk.length}`, 'success'); }
   function batchClearSpecial(did) { const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = null; }); renderSpecialDocForm(); showToast(`已清除 ×${chk.length}`, 'success'); }
   function updateDutyOrder(i, did) { if (!state.dutyOrder) state.dutyOrder = []; while (state.dutyOrder.length < 8) state.dutyOrder.push(''); state.dutyOrder[i] = did || ''; renderPanel(); syncStateToBackground(); }
@@ -492,6 +636,78 @@
   function quickBaiban1(di, sl) { const cand = A.getBaiban1Candidates(state, di, sl); if (!cand.length) { showToast('无可用医生', 'warn'); return; } const names = cand.map((d, i) => `${i + 1}. ${d.name}(#${d.number})`).join('\n'); const choice = prompt(`选择白班1医生（${A.DAYS[di]}${A.SLOT_LABELS[sl]}）:\n\n${names}\n\n输入序号:`); if (!choice) return; const idx = +choice - 1; if (idx < 0 || idx >= cand.length) { showToast('无效选择', 'error'); return; } const doc = cand[idx]; if (!state.dutyAssigned) state.dutyAssigned = {}; if (!state.dutyAssigned[doc.id]) state.dutyAssigned[doc.id] = {}; if (!state.dutyAssigned[doc.id][di]) state.dutyAssigned[doc.id][di] = { am: null, pm: null }; state.dutyAssigned[doc.id][di][sl] = '白班1'; state.baiban1Flags = A.resolveConflict(state.baiban1Flags, di, sl, doc.id, doc.name); renderPanel(); syncStateToBackground(); }
   function fillEmpty() { const r = A.computeFillEmpty(state); state.dutyAssigned = r.dutyAssigned; renderPanel(); syncStateToBackground(); showToast(`已填补 ${r.count} 个空缺`, 'success'); }
   function syncTrainees() { const r = A.computeTraineeSync(state); state.dutyAssigned = r.dutyAssigned; state.traineeFlags = r.traineeFlags; renderPanel(); syncStateToBackground(); showToast('规培生已同步导师排班', 'success'); }
+
+  // ==================== JSON 导入/导出 ====================
+  function downloadJSON(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportFullScheduleJSON() {
+    const data = {
+      version: 1, type: 'fullSchedule', exportedAt: new Date().toISOString(),
+      doctors: state.doctors.map(d => ({
+        id: d.id, name: d.name, type: d.type, number: d.number,
+        mentorId: d.mentorId || null,
+        training: d.training || false,
+        onLeave: d.onLeave || false,
+        noDutyDays: d.noDutyDays || [],
+        dutyDays: d.dutyDays || []
+      })),
+      outpatientGeneral: state.outpatientGeneral || {},
+      outpatientSimple: state.outpatientSimple || [],
+      outpatientGaoxin: state.outpatientGaoxin || [],
+      outpatientZitong: state.outpatientZitong || [],
+      workdayConfig: state.workdayConfig || [true, true, true, true, true, false, false],
+      special: state.special || {},
+      dutyAssigned: state.dutyAssigned || {},
+      baiban1Flags: state.baiban1Flags || [],
+      traineeFlags: state.traineeFlags || {}
+    };
+    downloadJSON(data, `完整排班表_${new Date().toISOString().slice(0, 10)}.json`);
+    showToast('完整配置已导出', 'success');
+  }
+
+  function importFullScheduleJSON() {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = '.json';
+    input.addEventListener('change', function (e) {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (ev) {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (data.type !== 'fullSchedule' || !data.version) { showToast('无效的排班配置文件', 'error'); return; }
+          if (!confirm('导入完整排班表？当前所有排班数据将被替换。')) return;
+          if (data.doctors && data.doctors.length > 0) {
+            state.doctors = data.doctors.map(d => ({
+              id: d.id, name: d.name, type: d.type, number: d.number,
+              mentorId: d.mentorId || null,
+              training: d.training || false,
+              onLeave: d.onLeave || false,
+              noDutyDays: d.noDutyDays || [],
+              dutyDays: d.dutyDays || []
+            }));
+          }
+          state.outpatientGeneral = data.outpatientGeneral || {};
+          state.outpatientSimple = data.outpatientSimple || [];
+          state.outpatientGaoxin = data.outpatientGaoxin || [];
+          state.outpatientZitong = data.outpatientZitong || [];
+          state.workdayConfig = data.workdayConfig || [true, true, true, true, true, false, false];
+          state.special = data.special || {};
+          state.dutyAssigned = data.dutyAssigned || {};
+          state.baiban1Flags = data.baiban1Flags || [];
+          state.traineeFlags = data.traineeFlags || {};
+          renderPanel(); syncStateToBackground();
+          showToast('完整排班表已导入', 'success');
+        } catch (err) { showToast('JSON解析失败: ' + err.message, 'error'); }
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+    input.click();
+  }
 
   // ==================== 启动 ====================
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
