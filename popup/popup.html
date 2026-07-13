@@ -154,7 +154,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
     <div class="toggle-row">
       <span class="toggle-label">为本页面启用辅助插件</span>
       <label class="toggle-switch">
-        <input type="checkbox" id="enableToggle" onchange="onToggleEnable(this.checked)">
+        <input type="checkbox" id="enableToggle">
         <span class="toggle-slider"></span>
       </label>
     </div>
@@ -184,10 +184,10 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
   <div class="section" id="actionSection" style="display:none;">
     <div class="section-title">🔧 操作</div>
     <div class="btn-group">
-      <button class="btn btn-outline" id="btnRefreshData" onclick="refreshData()">🔄 刷新数据</button>
-      <button class="btn btn-outline" id="btnRestoreData" onclick="restoreData()">↩️ 恢复备份</button>
+      <button class="btn btn-outline" id="btnRefreshData">🔄 刷新数据</button>
+      <button class="btn btn-outline" id="btnRestoreData">↩️ 恢复备份</button>
     </div>
-    <button class="btn btn-primary" style="margin-top:6px;" id="btnOpenPanel" onclick="openFloatingPanel()">
+    <button class="btn btn-primary" style="margin-top:6px;" id="btnOpenPanel">
       📋 打开排班面板
     </button>
   </div>
@@ -198,12 +198,12 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
     <div class="toggle-row">
       <span class="toggle-label">允许在非正式页面运行</span>
       <label class="toggle-switch">
-        <input type="checkbox" id="testModeToggle" onchange="onToggleTestMode(this.checked)">
+        <input type="checkbox" id="testModeToggle">
         <span class="toggle-slider"></span>
       </label>
     </div>
     <input type="text" id="testUrlInput" placeholder="输入测试页面URL匹配模式..." style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:11px;margin-top:6px;">
-    <button class="btn btn-outline" style="margin-top:6px;" onclick="addTestPattern()">➕ 添加测试页面</button>
+    <button class="btn btn-outline" style="margin-top:6px;" id="btnAddTestPattern">➕ 添加测试页面</button>
   </div>
 </div>
 

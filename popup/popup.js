@@ -6,6 +6,18 @@ let currentState = { enabled: false, weekInfo: null };
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
+  // ---- 绑定事件监听器（替代内联onclick/onchange，避免CSP违规） ----
+  document.getElementById('enableToggle').addEventListener('change', function () {
+    onToggleEnable(this.checked);
+  });
+  document.getElementById('testModeToggle').addEventListener('change', function () {
+    onToggleTestMode(this.checked);
+  });
+  document.getElementById('btnRefreshData').addEventListener('click', refreshData);
+  document.getElementById('btnRestoreData').addEventListener('click', restoreData);
+  document.getElementById('btnOpenPanel').addEventListener('click', openFloatingPanel);
+  document.getElementById('btnAddTestPattern').addEventListener('click', addTestPattern);
+
   // 加载扩展状态
   try {
     const resp = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
@@ -116,24 +128,55 @@ function restoreData() {
 
 function onToggleTestMode(enabled) {
   chrome.storage.local.set({ testMode: enabled });
+  if (enabled) {
+    // 通知 background 注册测试脚本
+    chrome.storage.local.get(['testPatterns'], (result) => {
+      const patterns = result.testPatterns || [];
+      if (patterns.length > 0) {
+        chrome.runtime.sendMessage({ type: 'REGISTER_TEST_SCRIPTS', patterns });
+      }
+    });
+  } else {
+    chrome.runtime.sendMessage({ type: 'UNREGISTER_TEST_SCRIPTS' });
+  }
 }
 
 function addTestPattern() {
   const input = document.getElementById('testUrlInput').value.trim();
-  if (!input) return;
-  const patterns = input.split('\n').filter(p => p.trim());
+  if (!input) {
+    showPopupToast('请输入URL匹配模式', 'warn');
+    return;
+  }
+  const patterns = input.split('\n').map(p => p.trim()).filter(p => p);
 
+  // 持久化存储
   chrome.storage.local.set({ testPatterns: patterns }, () => {
-    // 更新动态content script注册
-    if (patterns.length > 0) {
-      chrome.scripting.registerContentScripts([{
-        id: 'scheduling-helper-test',
-        matches: patterns,
-        js: ['lib/algorithm.js', 'lib/api.js', 'content/content.js'],
-        css: ['content/floating-panel.css'],
-        runAt: 'document_end'
-      }]).catch(e => console.log('注册测试脚本:', e));
-    }
-    alert('已添加 ' + patterns.length + ' 个测试页面匹配模式。\n刷新目标页面后生效。');
+    // 通过 background service worker 注册
+    chrome.runtime.sendMessage(
+      { type: 'REGISTER_TEST_SCRIPTS', patterns },
+      (resp) => {
+        if (resp && resp.success) {
+          showPopupToast(`已注册 ${patterns.length} 个测试页面匹配。刷新目标页面后生效。`, 'success');
+        } else {
+          showPopupToast('注册失败: ' + (resp?.error || '未知错误'), 'error');
+        }
+      }
+    );
   });
+}
+
+function showPopupToast(msg, type) {
+  const existing = document.querySelector('.popup-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'popup-toast';
+  toast.style.cssText = `
+    padding:8px 12px; margin-top:8px; border-radius:6px; font-size:11px;
+    ${type==='success'?'background:#f6ffed;color:#389e0d;border:1px solid #b7eb8f':
+      type==='error'?'background:#fff2f0;color:#cf1322;border:1px solid #ffccc7':
+      'background:#fffbe6;color:#ad6800;border:1px solid #ffe58f'}
+  `;
+  toast.textContent = msg;
+  document.querySelector('.content').appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
 }

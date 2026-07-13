@@ -92,6 +92,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true;
 
+    case 'REGISTER_TEST_SCRIPTS':
+      registerTestScripts(message.patterns)
+        .then(() => sendResponse({ success: true }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+      return true;
+
+    case 'UNREGISTER_TEST_SCRIPTS':
+      unregisterTestScripts()
+        .then(() => sendResponse({ success: true }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+      return true;
+
     default:
       sendResponse({ success: false, error: 'Unknown message type' });
   }
@@ -107,8 +119,69 @@ function saveState() {
 function notifyContentScript(tabId, message) {
   if (tabId) {
     chrome.tabs.sendMessage(tabId, message).catch(() => {
-      // content script可能未加载
       console.log('[排班辅助] content script未响应');
     });
   }
+}
+
+// ==================== 动态Content Script注册 ====================
+const TEST_SCRIPT_ID = 'scheduling-helper-test';
+
+/**
+ * 注册测试页面的 content script（由 popup 触发）
+ * @param {string[]} patterns - URL 匹配模式数组
+ */
+async function registerTestScripts(patterns) {
+  if (!patterns || patterns.length === 0) {
+    await unregisterTestScripts();
+    return;
+  }
+
+  // 校验是否为合法 match pattern
+  const validPatterns = patterns.filter(p => {
+    try {
+      // match pattern 格式: <scheme>://<host>/<path>
+      // 常见合法格式: http://localhost/* , file:///* , *://*.example.com/*
+      return p.includes('://') && p.includes('/');
+    } catch { return false; }
+  });
+
+  if (validPatterns.length === 0) {
+    throw new Error('没有有效的URL匹配模式。格式示例: http://localhost/* 或 file:///C:/path/*');
+  }
+
+  console.log('[排班辅助 BG] 注册测试脚本, 匹配模式:', validPatterns);
+
+  try {
+    // 先注销旧的
+    await unregisterTestScripts();
+  } catch { /* 忽略首次注册 */ }
+
+  try {
+    await chrome.scripting.registerContentScripts([{
+      id: TEST_SCRIPT_ID,
+      matches: validPatterns,
+      js: ['lib/algorithm.js', 'lib/api.js', 'content/content.js'],
+      css: ['content/floating-panel.css'],
+      runAt: 'document_end',
+      persistAcrossSessions: true
+    }]);
+    console.log('[排班辅助 BG] 测试脚本注册成功');
+  } catch (err) {
+    console.error('[排班辅助 BG] 注册失败:', err);
+    throw new Error(`注册失败: ${err.message}。请确认已在扩展管理页面开启"允许访问文件网址"（如使用 file:// 模式）。`);
+  }
+}
+
+/**
+ * 注销测试页面 content script
+ */
+async function unregisterTestScripts() {
+  try {
+    const scripts = await chrome.scripting.getRegisteredContentScripts({ ids: [TEST_SCRIPT_ID] });
+    if (scripts && scripts.length > 0) {
+      await chrome.scripting.unregisterContentScripts({ ids: [TEST_SCRIPT_ID] });
+      console.log('[排班辅助 BG] 测试脚本已注销');
+    }
+  } catch { /* 忽略 */ }
 }
