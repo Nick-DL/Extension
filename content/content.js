@@ -249,12 +249,10 @@
     setupPanelDelegation(p);
   }
 
-  // ==================== 事件代理：一条规则解决所有 CSP 问题 ====================
+  // ==================== 事件代理：绑定到整个 panel（包括步骤条和body） ====================
   function setupPanelDelegation(panel) {
-    const body = panel.querySelector('#sh-panel-body');
-
-    // click 代理
-    body.addEventListener('click', (e) => {
+    // click 代理 — 绑在整个 panel 上，覆盖步骤条 + body 区域
+    panel.addEventListener('click', (e) => {
       const el = e.target.closest('[data-action]'); if (!el) return;
       const action = el.dataset.action; const ds = el.dataset;
       switch (action) {
@@ -281,8 +279,8 @@
       }
     });
 
-    // change 代理 (select元素)
-    body.addEventListener('change', (e) => {
+    // change 代理 (select元素) — 同样绑在 panel 上
+    panel.addEventListener('change', (e) => {
       const el = e.target.closest('[data-action]'); if (!el) return;
       const action = el.dataset.action; const ds = el.dataset; const val = el.value;
       switch (action) {
@@ -297,14 +295,14 @@
     });
 
     // 拖拽代理
-    body.addEventListener('dragstart', (e) => {
+    panel.addEventListener('dragstart', (e) => {
       const el = e.target.closest('[data-action="dutyDrag"]'); if (!el) return;
       dragSrcIdx = +el.dataset.idx;
     });
 
-    body.addEventListener('dragover', (e) => { e.preventDefault(); });
+    panel.addEventListener('dragover', (e) => { e.preventDefault(); });
 
-    body.addEventListener('drop', (e) => {
+    panel.addEventListener('drop', (e) => {
       e.preventDefault();
       const el = e.target.closest('[data-action="dutyDrag"]'); if (!el || dragSrcIdx === null) return;
       const targetIdx = +el.dataset.idx; if (dragSrcIdx === targetIdx) { dragSrcIdx = null; return; }
@@ -346,30 +344,50 @@
 
   // ===== S1: 人员 =====
   function renderS1(body) {
-    const docs = state.doctors; let h = `<div class="sh-info-bar info">💡 人员数据从系统自动加载。仅显示"医疗"和"规培"类别。</div><div style="font-weight:600;font-size:12px;margin-bottom:4px;">📋 人员列表 (${docs.length}人)</div><ul class="sh-doc-list">`;
-    for (let d of docs) { const tc = d.type === 'trainee' ? '规培' : d.type === 'director' ? '主任' : '医生'; let ex = ''; if (d.type === 'trainee') { const m = getDoctor(d.mentorId); ex = `导师:${m ? m.name : '—'}`; } if (d.training) ex = '培训中'; if (d.onLeave) ex = '休假中'; h += `<li><span><strong>#${d.number}</strong> ${d.name} <span style="font-size:10px;color:#999;">${tc}</span><span style="font-size:9px;color:#bbb;">${ex}</span></span></li>`; }
-    h += `</ul><div class="sh-divider"></div><div style="font-weight:600;font-size:12px;margin-bottom:4px;">📅 工作日/节假日设定</div><div class="sh-btn-group">`;
-    for (let d = 0; d < 7; d++) { const wd = (state.workdayConfig || [])[d]; h += `<button class="sh-btn-action sh-btn-sm ${wd ? 'sh-btn-primary' : 'sh-btn-outline'}" data-action="toggleWorkday" data-day="${d}" style="flex:1;">${A.DAYS[d]}</button>`; }
-    h += `</div><button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:10px;">下一步 → 门诊安排</button>`;
+    const docs = state.doctors;
+    let h = `<div class="sh-info-bar info">💡 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员（护理体系不参与）。</div>`;
+    h += `<div class="sh-subtitle">📋 人员列表 <span style="font-size:10px;color:#999;font-weight:400;">(${docs.length}人)</span></div>`;
+    h += `<ul class="sh-doc-list">`;
+    for (let d of docs) {
+      const tagCls = d.type === 'trainee' ? 'trainee' : d.type === 'director' ? 'director' : 'regular';
+      const tagText = d.type === 'trainee' ? '规培' : d.type === 'director' ? '主任' : '医生';
+      let ex = '';
+      if (d.type === 'trainee') { const m = getDoctor(d.mentorId); ex = `<span style="font-size:9px;color:#999;">导师:${m ? m.name : '—'}</span>`; }
+      if (d.training) ex += ' <span class="sh-doc-tag training">培训中</span>';
+      if (d.onLeave) ex += ' <span class="sh-doc-tag leave">休假中</span>';
+      h += `<li><span><strong>#${d.number}</strong> ${d.name} <span class="sh-doc-tag ${tagCls}">${tagText}</span>${ex}</span></li>`;
+    }
+    h += `</ul>`;
+    h += `<div class="sh-divider"></div>`;
+    h += `<div class="sh-subtitle">📅 工作日 / 节假日设定</div>`;
+    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#1677ff;">蓝色=工作日</span>，灰色=节假日。周末默认设为节假日。</div>`;
+    h += `<div class="sh-workday-row">`;
+    for (let d = 0; d < 7; d++) { const wd = (state.workdayConfig || [])[d]; h += `<button class="sh-btn-action sh-btn-sm ${wd ? 'sh-btn-primary' : 'sh-btn-outline'}" data-action="toggleWorkday" data-day="${d}">${A.DAYS[d]}</button>`; }
+    h += `</div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:12px;">下一步 → 门诊安排</button>`;
     body.innerHTML = h;
   }
 
   // ===== S2: 门诊 =====
   function renderS2(body) {
-    let h = `<div class="sh-info-bar info">💡 门诊分为四类管理。门诊具有最高优先级。</div>`;
-    h += `<div style="font-weight:600;font-size:12px;margin:8px 0 4px;color:#3f51b5;">🏥 总院门诊</div>`;
-    for (let d = 0; d < 7; d++) { const gen = state.outpatientGeneral[d] || { am: null, pm: null }; h += `<div style="margin-bottom:3px;font-size:11px;"><strong>${A.DAYS[d]}</strong><div class="sh-form-row">`;
-      for (let s of A.SLOTS) h += `<div style="flex:1;"><span style="font-size:10px;color:#999;">${A.SLOT_LABELS[s]}</span><select data-action="updateGeneral" data-day="${d}" data-slot="${s}" style="font-size:10px;"><option value="">—</option>${docOptsHtmlSelected(gen[s])}</select></div>`; h += `</div></div>`; }
-    h += `<div style="font-weight:600;font-size:12px;margin:8px 0 4px;color:#009688;">🏥 高新门诊（仅上午）</div><div id="sh-gaoxin-rows">`;
+    let h = `<div class="sh-info-bar info">💡 门诊分为四类管理，具有<b>最高优先级</b>。<br>· 总院门诊 每天上、下午<br>· 简易门诊 时间不固定（表格中显示为总院门诊）<br>· 高新门诊 周内上午<br>· 梓潼门诊 每两周周三上午</div>`;
+    // 总院门诊
+    h += `<div class="sh-subtitle sh-clinic-title-general">🏥 总院门诊</div>`;
+    for (let d = 0; d < 7; d++) { const gen = state.outpatientGeneral[d] || { am: null, pm: null }; h += `<div style="margin-bottom:4px;font-size:11px;padding:4px 6px;background:#fafafa;border-radius:4px;"><strong>${A.DAYS[d]}</strong><div class="sh-form-row">`;
+      for (let s of A.SLOTS) h += `<div style="flex:1;"><span style="font-size:9px;color:#999;">${A.SLOT_LABELS[s]}</span><select data-action="updateGeneral" data-day="${d}" data-slot="${s}" style="font-size:10px;"><option value="">—</option>${docOptsHtmlSelected(gen[s])}</select></div>`; h += `</div></div>`; }
+    // 高新门诊
+    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-gaoxin">🏥 高新门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午）</span></div><div id="sh-gaoxin-rows">`;
     (state.outpatientGaoxin || []).forEach((it, i) => { h += renderGxRow(i, it); });
-    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addGaoxin">➕ 添加</button>`;
-    h += `<div style="font-weight:600;font-size:12px;margin:8px 0 4px;color:#00bcd4;">🏥 梓潼门诊（仅上午·每两周周三）</div><div id="sh-zitong-rows">`;
+    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addGaoxin">➕ 添加高新门诊</button>`;
+    // 梓潼门诊
+    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-zitong">🏥 梓潼门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午 · 每两周周三）</span></div><div id="sh-zitong-rows">`;
     (state.outpatientZitong || []).forEach((it, i) => { h += renderZtRow(i, it); });
-    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addZitong">➕ 添加</button>`;
-    h += `<div style="font-weight:600;font-size:12px;margin:8px 0 4px;color:#3f51b5;">🏥 简易门诊</div><div id="sh-simple-rows">`;
+    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addZitong">➕ 添加梓潼门诊</button>`;
+    // 简易门诊
+    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-general">🏥 简易门诊 <span style="font-size:10px;color:#999;font-weight:400;">（表格中显示为总院门诊）</span></div><div id="sh-simple-rows">`;
     (state.outpatientSimple || []).forEach((it, i) => { h += renderSmRow(i, it); });
-    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addSimple">➕ 添加</button>`;
-    h += `<div class="sh-btn-group" style="margin-top:10px;"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3" style="margin-left:auto;">下一步 →</button></div>`;
+    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addSimple">➕ 添加简易门诊</button>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 → 特殊安排</button></div>`;
     body.innerHTML = h;
   }
   function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0,1,2,3,4].map(d=>`<option value="${d}" ${it.dayIdx===d?'selected':''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId||'')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}">✕</button></div>`; }
@@ -378,17 +396,23 @@
 
   // ===== S3: 特殊安排 =====
   function renderS3(body) {
-    let h = `<div class="sh-info-bar info">💡 为每位医生设置特殊安排（产假/事假/休/二线/培训/开会/医疗保障）。</div><label>选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d=>`<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:6px;"></div><div class="sh-btn-group" style="margin-top:10px;"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4" style="margin-left:auto;">下一步 →</button></div>`;
+    let h = `<div class="sh-info-bar info">💡 为每位医生单独设置特殊安排。<br>选择医生 → 勾选时段 → 批量应用类型。<br>类型包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
+    h += `<label>👨‍⚕️ 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d=>`<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 → 值班排班</button></div>`;
     body.innerHTML = h;
   }
   function renderSpecialDocForm() {
     const sel = document.getElementById('sh-special-doc'), fd = document.getElementById('sh-special-form'); if (!sel || !fd) return;
     const did = sel.value; if (!did) { fd.innerHTML = ''; return; }
     const doc = getDoctor(did); if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {};
-    let h = `<div style="font-weight:600;font-size:12px;margin-bottom:2px;">${doc.name}</div><div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日</button></div><div class="sh-form-row" style="margin:6px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择类型</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除</button></div>`;
-    for (let d = 0; d < 7; d++) { const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:2px;padding:3px 6px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:28px;">${A.DAYS[d]}</strong>`;
-      for (let sl of A.SLOTS) h += `<label style="display:flex;align-items:center;gap:2px;flex:1;font-size:9px;"><input type="checkbox" class="sh-special-chk" data-doc="${did}" data-day="${d}" data-slot="${sl}">${A.SLOT_LABELS[sl]}<select data-action="updateSpecial" data-doc="${did}" data-day="${d}" data-slot="${sl}" style="flex:1;font-size:10px;"><option value="">—</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}" ${sp[sl]===t?'selected':''}>${t}</option>`).join('')}</select></label>`;
-      h += `<span style="font-size:8px;color:#999;min-width:40px;text-align:right;">${sp.am||'—'}/${sp.pm||'—'}</span></div>`; }
+    let h = `<div class="sh-step-section">`;
+    h += `<div class="sh-subtitle" style="margin-top:0;">👨‍⚕️ ${doc.name} <span style="font-size:10px;color:#999;font-weight:400;">#${doc.number}</span></div>`;
+    h += `<div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日全选</button></div>`;
+    h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除选中</button></div>`;
+    for (let d = 0; d < 7; d++) { const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:3px;padding:5px 8px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:30px;">${A.DAYS[d]}</strong>`;
+      for (let sl of A.SLOTS) h += `<label style="display:flex;align-items:center;gap:2px;flex:1;font-size:9px;cursor:pointer;"><input type="checkbox" class="sh-special-chk" data-doc="${did}" data-day="${d}" data-slot="${sl}">${A.SLOT_LABELS[sl]}<select data-action="updateSpecial" data-doc="${did}" data-day="${d}" data-slot="${sl}" style="flex:1;font-size:10px;"><option value="">—</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}" ${sp[sl]===t?'selected':''}>${t}</option>`).join('')}</select></label>`;
+      h += `<span style="font-size:8px;color:#999;min-width:44px;text-align:right;">${sp.am||'—'} / ${sp.pm||'—'}</span></div>`; }
+    h += `</div>`;
     fd.innerHTML = h;
   }
 
@@ -396,11 +420,17 @@
   function renderS4(body) {
     if (!state.dutyOrder || state.dutyOrder.length !== 8) state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
     const order = state.dutyOrder || [], pool = A.getDutyDoctorPool(state.doctors), flags = state.baiban1Flags || [];
-    let h = `<div class="sh-info-bar info">💡· 拖拽排序值班医生。· 节假日中班自动转休。</div><div style="font-weight:600;font-size:12px;">📋 值班序列 (${order.filter(id=>id&&getDoctor(id)).length}/8)</div><div id="sh-duty-order">`;
+    let h = `<div class="sh-info-bar info">💡 值班为8排轮转制（中班→值班→夜休）。<br>· 按住 ⋮⋮ 拖拽可调整医生顺序<br>· 节假日中班自动转为休假<br>· 已有安排不会被覆盖<br>· 重新执行前请先<b>清空值班</b></div>`;
+    h += `<div class="sh-subtitle">📋 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id=>id&&getDoctor(id)).length}/8)</span></div>`;
+    h += `<div id="sh-duty-order">`;
     for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d=>`<option value="${d.id}" ${did===d.id?'selected':''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
-    h += `</div><div class="sh-btn-group" style="margin-top:6px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder">🔄 默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;"><input type="checkbox" id="sh-cancel-zb"> 假前一天取消中班</label></div><button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty">🤖 执行自动排班</button><button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty">🗑 清空值班</button>`;
-    if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:6px;">⚠️ ${flags.length}个冲突需处理</div>`;
-    h += `<div class="sh-btn-group" style="margin-top:10px;"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5" style="margin-left:auto;">下一步 →</button></div>`;
+    h += `</div>`;
+    h += `<div class="sh-btn-group" style="margin-top:8px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder">🔄 重置默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="sh-cancel-zb"> 假期前一天取消中班</label></div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;">🤖 执行自动排班</button>`;
+    h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty">🗑 清空值班安排</button>`;
+    if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:8px;">⚠️ 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
+    else h += `<div class="sh-info-bar success" style="margin-top:8px;">✅ 无冲突</div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 → 调整确认</button></div>`;
     body.innerHTML = h;
     const cb = document.getElementById('sh-cancel-zb'); if (cb) { cb.checked = state.cancelPreHolidayZhongban; cb.addEventListener('change', function () { state.cancelPreHolidayZhongban = this.checked; }); }
   }
@@ -408,15 +438,33 @@
   // ===== S5: 确认 =====
   function renderS5(body) {
     const flags = state.baiban1Flags || [], trainees = state.doctors.filter(d => d.type === 'trainee');
-    let h = `<div class="sh-info-bar info">💡 处理冲突、规培生同步，最后提交。</div><div style="font-weight:600;font-size:12px;">（一）冲突处理</div>`;
+    let h = `<div class="sh-info-bar info">💡 处理冲突、规培生同步、一键填空，最后提交所有修改到系统。</div>`;
+    // (一) 冲突处理
+    h += `<div class="sh-subtitle">（一）冲突处理</div>`;
     if (flags.length) { h += `<ul class="sh-conflict-list">`;
-      for (let f of flags) { const r = !!f.resolvedBy; h += `<li class="${r?'resolved':''}"><span>${r?'ℹ️':'⚠️'}</span><span style="flex:1;">${f.reason}</span><span style="font-size:9px;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${r?'':`<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`; }
-      h += `</ul>`; } else { h += `<div class="sh-info-bar success">✅ 无冲突</div>`; }
-    h += `<div style="font-weight:600;font-size:12px;margin-top:8px;">（二）一键填空</div><button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty">🪣 空白→白班普/休</button>`;
-    if (trainees.length) h += `<div style="font-weight:600;font-size:12px;margin-top:8px;">（三）规培生同步</div><button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees">🔄 ${trainees.map(d=>d.name).join('、')} 应用导师排班</button>`;
+      for (let f of flags) { const r = !!f.resolvedBy; h += `<li class="${r?'resolved':''}"><span>${r?'ℹ️':'⚠️'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${r?'':`<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`; }
+      h += `</ul>`; } else { h += `<div class="sh-info-bar success">✅ 所有冲突已解决</div>`; }
+
+    // (二) 一键填空
+    h += `<div class="sh-subtitle">（二）一键填补空缺</div>`;
+    h += `<div class="sh-help-text">工作日空白 → <b style="color:#2196f3;">白班普</b> · 节假日空白 → <b style="color:#999;">休假</b></div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty">🪣 一键填空（白班普 / 休）</button>`;
+
+    // (三) 规培生同步
+    if (trainees.length) {
+      h += `<div class="sh-subtitle">（三）规培生一键安排</div>`;
+      h += `<div class="sh-help-text">为 ${trainees.map(d=>d.name).join('、')} 应用对应导师的排班（已有安排不覆盖，门诊/白班1不跟随）。</div>`;
+      h += `<button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees">🔄 为规培生应用导师排班</button>`;
+    }
+
+    // 统计
     const stats = A.computeWeekStats(state);
-    h += `<div style="font-weight:600;font-size:12px;margin-top:8px;">📊 统计</div><div style="font-size:10px;">${Object.entries(stats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span style="display:inline-block;margin:2px;padding:1px 6px;background:${A.TYPE_COLORS[k]}22;border-radius:8px;border:1px solid ${A.TYPE_COLORS[k]}44;">${k}:${v}次</span>`).join('')||'暂无'}</div>`;
-    h += `<div class="sh-divider"></div><button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll">✅ 提交所有修改</button><div class="sh-btn-group" style="margin-top:6px;"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="4">← 上一步</button></div>`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle">📊 本周排班统计</div>`;
+    h += `<div class="sh-stats-wrap">${Object.entries(stats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="sh-stat-tag" style="background:${A.TYPE_COLORS[k]}18;border-color:${A.TYPE_COLORS[k]}44;color:${A.TYPE_COLORS[k]};">${k}: ${v}次</span>`).join('')||'<span style="font-size:10px;color:#999;">暂无数据</span>'}</div>`;
+
+    // 提交
+    h += `<div class="sh-divider"></div><button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll">✅ 提交所有修改到系统</button>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="4">← 上一步</button></div>`;
     body.innerHTML = h;
   }
 

@@ -153,10 +153,36 @@
   font-size: 12px;
   outline: none;
   transition: border-color 0.2s;
+  background: #fff;
 }
 .sh-panel-body select:focus,
 .sh-panel-body input:focus {
   border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22,119,255,0.15);
+}
+
+/* 子标题 */
+.sh-panel-body .sh-subtitle {
+  font-weight: 600;
+  font-size: 12px;
+  margin: 10px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sh-panel-body .sh-subtitle-sm {
+  font-weight: 600;
+  font-size: 11px;
+  margin: 8px 0 3px;
+  color: #555;
+}
+
+/* 内联文本提示 */
+.sh-help-text {
+  font-size: 10px;
+  color: #999;
+  margin: 2px 0 6px;
+  line-height: 1.4;
 }
 
 /* ========== 按钮 ========== */
@@ -200,17 +226,35 @@
 .sh-info-bar.success { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
 
 /* ========== 列表 ========== */
-.sh-doc-list { list-style: none; }
+.sh-doc-list { list-style: none; margin: 0; padding: 0; }
 .sh-doc-list li {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
+  padding: 7px 10px;
   border-bottom: 1px solid #f0f0f0;
-  font-size: 11px;
+  font-size: 12px;
   gap: 8px;
+  transition: background 0.15s;
 }
 .sh-doc-list li:hover { background: #fafafa; }
+.sh-doc-list li:last-child { border-bottom: none; }
+
+/* 人员标签 */
+.sh-doc-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+  display: inline-block;
+  margin-left: 4px;
+}
+.sh-doc-tag.director { background: #fff0f0; color: #cf1322; }
+.sh-doc-tag.regular { background: #e6f4ff; color: #0958d9; }
+.sh-doc-tag.trainee { background: #f0fff0; color: #237804; }
+.sh-doc-tag.noDuty { background: #fffbe6; color: #ad6800; }
+.sh-doc-tag.training { background: #f6ffed; color: #389e0d; }
+.sh-doc-tag.leave { background: #fff0f6; color: #c41d7f; }
 
 .sh-form-row {
   display: flex;
@@ -324,4 +368,62 @@
   right: 0;
   height: 3px;
   border-radius: 0 0 2px 2px;
+}
+
+/* ========== 统计标签 ========== */
+.sh-stats-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 10px;
+  margin: 4px 0;
+}
+.sh-stat-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.08);
+  white-space: nowrap;
+}
+
+/* ========== 门诊子标题颜色 ========== */
+.sh-clinic-title-general { color: #3f51b5; }
+.sh-clinic-title-gaoxin { color: #009688; }
+.sh-clinic-title-zitong { color: #00bcd4; }
+
+/* ========== 步骤区域卡片 ========== */
+.sh-step-section {
+  padding: 8px 10px;
+  margin: 8px 0;
+  border-radius: 8px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+}
+
+/* ========== 滚动条美化 ========== */
+.sh-panel-body::-webkit-scrollbar { width: 5px; }
+.sh-panel-body::-webkit-scrollbar-track { background: transparent; }
+.sh-panel-body::-webkit-scrollbar-thumb { background: #d9d9d9; border-radius: 3px; }
+.sh-panel-body::-webkit-scrollbar-thumb:hover { background: #bbb; }
+
+/* ========== 快捷操作栏（上一步/下一步） ========== */
+.sh-nav-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sh-nav-row .sh-btn-action:first-child { flex: 0 0 auto; }
+.sh-nav-row .sh-btn-action:last-child { flex: 1; }
+
+/* ========== 工作日开关行 ========== */
+.sh-workday-row {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+.sh-workday-row .sh-btn-action {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
 }
