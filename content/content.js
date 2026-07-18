@@ -148,6 +148,16 @@
   }
 
   /**
+   * 将 Date 对象格式化为 YYYY-MM-DD（本地时间，避免 UTC+8 偏移导致日期差一天）
+   */
+  function fmtLocalDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  /**
    * ISO 8601: 根据年份和周数计算周一日期
    *   第1周 = 包含该年第一个周四的周
    */
@@ -158,7 +168,7 @@
     week1Mon.setDate(jan4.getDate() - (jan4Dow - 1));
     const monday = new Date(week1Mon);
     monday.setDate(week1Mon.getDate() + (week - 1) * 7);
-    return monday.toISOString().slice(0, 10);
+    return fmtLocalDate(monday);
   }
 
   /**
@@ -185,13 +195,14 @@
     const diffMs = mon - week1Mon;
     const diffDays = Math.round(diffMs / 86400000);
     const wn = Math.floor(diffDays / 7) + 1;
-    console.log('[排班辅助][getWeekInfo] 输入:', date, '→ mon:', mon.toISOString().slice(0,10),
-      'thu:', thu.toISOString().slice(0,10), 'isoYear:', isoYear,
-      'week1Mon:', week1Mon.toISOString().slice(0,10),
+    console.log('[排班辅助][getWeekInfo] 输入:', date,
+      '→ mon:', fmtLocalDate(mon),
+      'thu:', fmtLocalDate(thu), 'isoYear:', isoYear,
+      'week1Mon:', fmtLocalDate(week1Mon),
       'diffMs:', diffMs, 'diffDays:', diffDays, 'wn:', wn);
-    return { year: isoYear, week: wn, monday: mon.toISOString().slice(0, 10) };
+    return { year: isoYear, week: wn, monday: fmtLocalDate(mon) };
   }
-  function getSunday(ms) { const d = new Date(ms); d.setDate(d.getDate() + 6); return d.toISOString().slice(0, 10); }
+  function getSunday(ms) { const d = new Date(ms); d.setDate(d.getDate() + 6); return fmtLocalDate(d); }
 
   // ==================== 数据加载 ====================
   async function refreshAllData() {
@@ -300,7 +311,7 @@
     state.outpatientSimple = []; state.outpatientGaoxin = []; state.outpatientZitong = [];
     for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
     const m = new Date(weekInfo.monday); const d2i = {};
-    for (let d = 0; d < 7; d++) { const dt = new Date(m); dt.setDate(m.getDate() + d); d2i[dt.toISOString().slice(0, 10)] = d; }
+    for (let d = 0; d < 7; d++) { const dt = new Date(m); dt.setDate(m.getDate() + d); d2i[fmtLocalDate(dt)] = d; }
     console.log('[排班辅助] 日期映射(d2i):', JSON.stringify(d2i));
 
     var skippedNoEid = 0, skippedNoCn = 0, skippedNoDate = 0, parsedOk = 0;
@@ -379,7 +390,7 @@
 
     const pm = new Date(weekInfo.monday);
     pm.setDate(pm.getDate() - 7);
-    const pms = pm.toISOString().slice(0, 10);
+    const pms = fmtLocalDate(pm);
     const pme = getSunday(pms);
 
     try {
@@ -403,7 +414,7 @@
     for (let d = 0; d < 7; d++) {
       const dt = new Date(m);
       dt.setDate(m.getDate() + d);
-      d2i[dt.toISOString().slice(0, 10)] = d;
+      d2i[fmtLocalDate(dt)] = d;
     }
 
     let outGeneralCount = 0, outGaoxinCount = 0, outZitongCount = 0;
@@ -482,7 +493,7 @@
     state.outpatientZitong = JSON.parse(JSON.stringify(originalData.outpatientZitong || []));
     state.special = JSON.parse(JSON.stringify(originalData.special || {}));
     state.dutyAssigned = JSON.parse(JSON.stringify(originalData.dutyAssigned || {}));
-    state.workdayConfig = JSON.parse(JSON.stringify(originalData.workdayConfig || [true,true,true,true,true,false,false]));
+    state.workdayConfig = JSON.parse(JSON.stringify(originalData.workdayConfig || [true, true, true, true, true, false, false]));
     state.baiban1Flags = []; state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
     renderPanel(); showToast('已恢复原始数据', 'success');
   }
@@ -1118,8 +1129,10 @@
 
     // 总院门诊
     h += `<div class="sh-subtitle sh-clinic-title-general"><span class="material-icons">local_hospital</span> 总院门诊</div>`;
-    for (let d = 0; d < 7; d++) { const gen = state.outpatientGeneral[d] || { am: null, pm: null }; h += `<div style="margin-bottom:4px;font-size:11px;padding:4px 6px;background:#fafafa;border-radius:4px;"><strong>${A.DAYS[d]}</strong><div class="sh-form-row">`;
-      for (let s of A.SLOTS) h += `<div style="flex:1;"><span style="font-size:9px;color:#999;">${A.SLOT_LABELS[s]}</span><select data-action="updateGeneral" data-day="${d}" data-slot="${s}" style="font-size:10px;"><option value="">—</option>${docOptsHtmlSelected(gen[s])}</select></div>`; h += `</div></div>`; }
+    for (let d = 0; d < 7; d++) {
+      const gen = state.outpatientGeneral[d] || { am: null, pm: null }; h += `<div style="margin-bottom:4px;font-size:11px;padding:4px 6px;background:#fafafa;border-radius:4px;"><strong>${A.DAYS[d]}</strong><div class="sh-form-row">`;
+      for (let s of A.SLOTS) h += `<div style="flex:1;"><span style="font-size:9px;color:#999;">${A.SLOT_LABELS[s]}</span><select data-action="updateGeneral" data-day="${d}" data-slot="${s}" style="font-size:10px;"><option value="">—</option>${docOptsHtmlSelected(gen[s])}</select></div>`; h += `</div></div>`;
+    }
     // 高新门诊
     h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-gaoxin"><span class="material-icons">local_hospital</span> 高新门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午）</span></div><div id="sh-gaoxin-rows">`;
     (state.outpatientGaoxin || []).forEach((it, i) => { h += renderGxRow(i, it); });
@@ -1141,9 +1154,9 @@
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 <span class="material-icons">arrow_forward</span> 特殊安排</button></div>`;
     body.innerHTML = h;
   }
-  function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0,1,2,3,4].map(d=>`<option value="${d}" ${it.dayIdx===d?'selected':''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId||'')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}">✕</button></div>`; }
-  function renderZtRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateZitong" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0,1,2,3,4].map(d=>`<option value="${d}" ${it.dayIdx===d?'selected':''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateZitong" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId||'')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeZitong" data-idx="${i}">✕</button></div>`; }
-  function renderSmRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateSimple" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">日期</option>${[0,1,2,3,4,5,6].map(d=>`<option value="${d}" ${it.dayIdx===d?'selected':''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateSimple" data-idx="${i}" data-field="slot" style="flex:0.7;font-size:10px;"><option value="">时段</option><option value="am" ${it.slot==='am'?'selected':''}>上午</option><option value="pm" ${it.slot==='pm'?'selected':''}>下午</option></select><select data-action="updateSimple" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">医生</option>${docOptsHtmlSelected(it.doctorId||'')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeSimple" data-idx="${i}">✕</button></div>`; }
+  function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}">✕</button></div>`; }
+  function renderZtRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateZitong" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateZitong" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeZitong" data-idx="${i}">✕</button></div>`; }
+  function renderSmRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateSimple" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">日期</option>${[0, 1, 2, 3, 4, 5, 6].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateSimple" data-idx="${i}" data-field="slot" style="flex:0.7;font-size:10px;"><option value="">时段</option><option value="am" ${it.slot === 'am' ? 'selected' : ''}>上午</option><option value="pm" ${it.slot === 'pm' ? 'selected' : ''}>下午</option></select><select data-action="updateSimple" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeSimple" data-idx="${i}">✕</button></div>`; }
 
   // ===== 上周门诊导入预览渲染 =====
   function renderPrevWeekOutpatientSection() {
@@ -1270,7 +1283,7 @@
   // ===== S3: 特殊安排 =====
   function renderS3(body) {
     let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
-    h += `<label><span class="material-icons">medical_services</span> 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d=>`<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
+    h += `<label><span class="material-icons">medical_services</span> 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d => `<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 <span class="material-icons">arrow_forward</span> 值班排班</button></div>`;
     body.innerHTML = h;
   }
@@ -1281,10 +1294,12 @@
     let h = `<div class="sh-step-section">`;
     h += `<div class="sh-subtitle" style="margin-top:0;"><span class="material-icons">medical_services</span> ${doc.name} <span style="font-size:10px;color:#999;font-weight:400;">#${doc.number}</span></div>`;
     h += `<div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="am">上午全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="pm">下午全选</button></div>`;
-    h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除选中</button></div>`;
-    for (let d = 0; d < 7; d++) { const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:3px;padding:5px 8px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:30px;">${A.DAYS[d]}</strong>`;
-      for (let sl of A.SLOTS) h += `<label style="display:flex;align-items:center;gap:2px;flex:1;font-size:9px;cursor:pointer;"><input type="checkbox" class="sh-special-chk" data-doc="${did}" data-day="${d}" data-slot="${sl}">${A.SLOT_LABELS[sl]}<select data-action="updateSpecial" data-doc="${did}" data-day="${d}" data-slot="${sl}" style="flex:1;font-size:10px;"><option value="">—</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}" ${sp[sl]===t?'selected':''}>${t}</option>`).join('')}</select></label>`;
-      h += `<span style="font-size:8px;color:#999;min-width:44px;text-align:right;">${sp.am||'—'} / ${sp.pm||'—'}</span></div>`; }
+    h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除选中</button></div>`;
+    for (let d = 0; d < 7; d++) {
+      const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:3px;padding:5px 8px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:30px;">${A.DAYS[d]}</strong>`;
+      for (let sl of A.SLOTS) h += `<label style="display:flex;align-items:center;gap:2px;flex:1;font-size:9px;cursor:pointer;"><input type="checkbox" class="sh-special-chk" data-doc="${did}" data-day="${d}" data-slot="${sl}">${A.SLOT_LABELS[sl]}<select data-action="updateSpecial" data-doc="${did}" data-day="${d}" data-slot="${sl}" style="flex:1;font-size:10px;"><option value="">—</option>${A.SPECIAL_TYPES.map(t => `<option value="${t}" ${sp[sl] === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+      h += `<span style="font-size:8px;color:#999;min-width:44px;text-align:right;">${sp.am || '—'} / ${sp.pm || '—'}</span></div>`;
+    }
     h += `</div>`;
     fd.innerHTML = h;
   }
@@ -1298,9 +1313,9 @@
     // ---- 导入上周值班顺序区域 ----
     h += renderPrevWeekDutySection();
 
-    h += `<div class="sh-subtitle"><span class="material-icons">list_alt</span> 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id=>id&&getDoctor(id)).length}/8)</span></div>`;
+    h += `<div class="sh-subtitle"><span class="material-icons">list_alt</span> 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id => id && getDoctor(id)).length}/8)</span></div>`;
     h += `<div id="sh-duty-order">`;
-    for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d=>`<option value="${d.id}" ${did===d.id?'selected':''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
+    for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d => `<option value="${d.id}" ${did === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
     h += `</div>`;
     h += `<div class="sh-btn-group" style="margin-top:8px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder"><span class="material-icons">refresh</span> 重置默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="sh-cancel-zb"> 假期前一天取消中班</label></div>`;
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;padding:8px 16px;font-size:13px;"><span class="material-icons">manage_history</span> 执行自动排班</button>`;
@@ -1611,7 +1626,7 @@
 
     const pm = new Date(weekInfo.monday);
     pm.setDate(pm.getDate() - 7);
-    const pms = pm.toISOString().slice(0, 10);
+    const pms = fmtLocalDate(pm);
     const pme = getSunday(pms);
 
     showToast('正在加载上周门诊数据...', 'info');
@@ -1629,7 +1644,7 @@
       const d2i = {};
       for (let d = 0; d < 7; d++) {
         const dt = new Date(m); dt.setDate(m.getDate() + d);
-        d2i[dt.toISOString().slice(0, 10)] = d;
+        d2i[fmtLocalDate(dt)] = d;
       }
 
       // 初始化预览结构
@@ -1721,7 +1736,7 @@
         ' 缺日期=' + skippedPrevNoDate + ' 无此医生=' + skippedPrevNoDoc + ') 门诊=' + totalParsed + '条');
       console.log('[排班辅助] 📊 上周班型分布:', JSON.stringify(prevCnSamples));
       console.log('[排班辅助] 📊 门诊明细: 总院',
-        Object.values(previewGeneral).reduce((s, d) => s + (d.am||[]).length + (d.pm||[]).length, 0),
+        Object.values(previewGeneral).reduce((s, d) => s + (d.am || []).length + (d.pm || []).length, 0),
         '条, 高新', previewGaoxin.length, '条, 梓潼', previewZitong.length, '条, 冲突', conflicts.length, '个');
 
       if (totalParsed === 0) {
@@ -1748,7 +1763,7 @@
 
     console.log('[排班辅助] 📋 开始应用上周门诊预览...');
     console.log('[排班辅助]   预览数据: 总院门诊',
-      Object.values(preview.outpatientGeneral).reduce((s, d) => s + (d.am||[]).length + (d.pm||[]).length, 0),
+      Object.values(preview.outpatientGeneral).reduce((s, d) => s + (d.am || []).length + (d.pm || []).length, 0),
       '条, 高新门诊', preview.outpatientGaoxin.length, '条, 梓潼门诊', preview.outpatientZitong.length, '条');
 
     // 找出冲突的时段集合
@@ -1773,10 +1788,10 @@
         if (!state.outpatientGeneral[d][sl]) {
           state.outpatientGeneral[d][sl] = eid;
           appliedGeneral++;
-          console.log('[排班辅助]   ✅ 应用总院门诊:', A.DAYS[d], A.SLOT_LABELS[sl], '→', (getDoctor(eid)||{}).name || eid);
+          console.log('[排班辅助]   ✅ 应用总院门诊:', A.DAYS[d], A.SLOT_LABELS[sl], '→', (getDoctor(eid) || {}).name || eid);
         } else {
           skippedOccupied++;
-          console.log('[排班辅助]   ⏭️ 跳过(已占用):', A.DAYS[d], A.SLOT_LABELS[sl], '已有:', (getDoctor(state.outpatientGeneral[d][sl])||{}).name || state.outpatientGeneral[d][sl]);
+          console.log('[排班辅助]   ⏭️ 跳过(已占用):', A.DAYS[d], A.SLOT_LABELS[sl], '已有:', (getDoctor(state.outpatientGeneral[d][sl]) || {}).name || state.outpatientGeneral[d][sl]);
         }
         // 第 2 个及以后 → 简易门诊
         for (var ai = 1; ai < arr.length; ai++) {
@@ -1784,7 +1799,7 @@
           if (!(state.outpatientSimple || []).some(function (a) { return a.dayIdx === d && a.slot === sl && a.doctorId === eidN; })) {
             if (!state.outpatientSimple) state.outpatientSimple = [];
             state.outpatientSimple.push({ dayIdx: d, slot: sl, doctorId: eidN });
-            console.log('[排班辅助]   📝 第' + (ai + 1) + '位→简易门诊:', (getDoctor(eidN)||{}).name || eidN);
+            console.log('[排班辅助]   📝 第' + (ai + 1) + '位→简易门诊:', (getDoctor(eidN) || {}).name || eidN);
           }
         }
       }
@@ -1799,9 +1814,9 @@
         if (!state.outpatientGaoxin) state.outpatientGaoxin = [];
         state.outpatientGaoxin.push({ dayIdx: ga.dayIdx, doctorId: ga.doctorId });
         appliedGaoxin++;
-        console.log('[排班辅助]   ✅ 应用高新门诊:', A.DAYS[ga.dayIdx], '→', (getDoctor(ga.doctorId)||{}).name || ga.doctorId);
+        console.log('[排班辅助]   ✅ 应用高新门诊:', A.DAYS[ga.dayIdx], '→', (getDoctor(ga.doctorId) || {}).name || ga.doctorId);
       } else {
-        console.log('[排班辅助]   ⏭️ 跳过高新(已存在):', A.DAYS[ga.dayIdx], (getDoctor(ga.doctorId)||{}).name || ga.doctorId);
+        console.log('[排班辅助]   ⏭️ 跳过高新(已存在):', A.DAYS[ga.dayIdx], (getDoctor(ga.doctorId) || {}).name || ga.doctorId);
       }
     }
 
@@ -1814,9 +1829,9 @@
         if (!state.outpatientZitong) state.outpatientZitong = [];
         state.outpatientZitong.push({ dayIdx: zt.dayIdx, doctorId: zt.doctorId });
         appliedZitong++;
-        console.log('[排班辅助]   ✅ 应用梓潼门诊:', A.DAYS[zt.dayIdx], '→', (getDoctor(zt.doctorId)||{}).name || zt.doctorId);
+        console.log('[排班辅助]   ✅ 应用梓潼门诊:', A.DAYS[zt.dayIdx], '→', (getDoctor(zt.doctorId) || {}).name || zt.doctorId);
       } else {
-        console.log('[排班辅助]   ⏭️ 跳过梓潼(已存在):', A.DAYS[zt.dayIdx], (getDoctor(zt.doctorId)||{}).name || zt.doctorId);
+        console.log('[排班辅助]   ⏭️ 跳过梓潼(已存在):', A.DAYS[zt.dayIdx], (getDoctor(zt.doctorId) || {}).name || zt.doctorId);
       }
     }
 
@@ -1866,13 +1881,13 @@
     // 上周一 ~ 上周日
     const lastMonday = new Date(weekInfo.monday);
     lastMonday.setDate(lastMonday.getDate() - 7);
-    const lms = lastMonday.toISOString().slice(0, 10);
+    const lms = fmtLocalDate(lastMonday);
     const lme = getSunday(lms);
 
     // 上上周日（位置[0]需要）
     const prevSunday = new Date(lastMonday);
     prevSunday.setDate(prevSunday.getDate() - 1);
-    const pss = prevSunday.toISOString().slice(0, 10);
+    const pss = fmtLocalDate(prevSunday);
 
     showToast('正在加载上周值班数据...', 'info');
     console.log('[排班辅助] 拉取上周值班: 主区间', lms, '~', lme, ' 上上周日', pss);
@@ -1922,7 +1937,7 @@
           if (!seen.has(c.doctorId)) { seen.add(c.doctorId); unique.push(c); }
         }
         console.log('[排班辅助]   🔍 日期' + targetDate + ' 值班候选人:', unique.length, '人',
-          unique.map(function(c) { return c.name; }).join(', '));
+          unique.map(function (c) { return c.name; }).join(', '));
         return unique.length > 0 ? unique[0] : null;
       };
 
@@ -1942,7 +1957,7 @@
       for (let d = 0; d < 7; d++) {
         const dt = new Date(lastMonday);
         dt.setDate(lastMonday.getDate() + d);
-        const ds = dt.toISOString().slice(0, 10);
+        const ds = fmtLocalDate(dt);
         dutyDates.push({ idx: d + 1, date: ds, label: A.DAYS[d] + '(' + ds + ')' });
       }
 
@@ -2019,7 +2034,7 @@
   }
 
   // ==================== 业务操作函数 ====================
-  function toggleWorkday(d) { if (!state.workdayConfig) state.workdayConfig = [true,true,true,true,true,false,false]; state.workdayConfig[d] = !state.workdayConfig[d]; renderPanel(); syncStateToBackground(); }
+  function toggleWorkday(d) { if (!state.workdayConfig) state.workdayConfig = [true, true, true, true, true, false, false]; state.workdayConfig[d] = !state.workdayConfig[d]; renderPanel(); syncStateToBackground(); }
   function updateMentor(traineeId, mentorId) {
     const doc = getDoctor(traineeId);
     if (!doc) return;
