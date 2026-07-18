@@ -51,7 +51,8 @@
       "resources": [
         "lib/algorithm.js",
         "lib/bridge.js",
-        "content/floating-panel.css"
+        "content/floating-panel.css",
+        "icons/icon.svg"
       ],
       "matches": [
         "http://10.66.66.151/*",

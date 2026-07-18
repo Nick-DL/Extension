@@ -28,7 +28,7 @@
   let extEnabled = false, panelVisible = false, isMinimized = false;
   let restoreFetch = null, classMap = {}, classIdMap = {}, locationId = '';
   let originalData = null;
-  let weekInfo = { year: new Date().getFullYear(), week: 1, monday: '' };
+  let weekInfo = getWeekInfo(new Date());
   let dragSrcIdx = null, dragOpacityTimer = null;
   let prevWeekOutpatientPreview = null;  // { outpatientGeneral, outpatientGaoxin, outpatientZitong, conflicts:[] }
   let prevWeekOutpatientLoaded = false;
@@ -148,26 +148,43 @@
   }
 
   /**
-   * 根据ISO周数计算近似周一日期
+   * ISO 8601: 根据年份和周数计算周一日期
+   *   第1周 = 包含该年第一个周四的周
    */
   function getMondayOfISOWeek(year, week) {
-    // ISO周: 第1周是包含该年第一个周四的周
     const jan4 = new Date(year, 0, 4);
-    const jan4Dow = jan4.getDay() || 7; // 周日=7
-    const firstMonday = new Date(jan4);
-    firstMonday.setDate(jan4.getDate() - (jan4Dow - 1));
-    const monday = new Date(firstMonday);
-    monday.setDate(firstMonday.getDate() + (week - 1) * 7);
+    const jan4Dow = jan4.getDay() || 7; // 周日→7
+    const week1Mon = new Date(jan4);
+    week1Mon.setDate(jan4.getDate() - (jan4Dow - 1));
+    const monday = new Date(week1Mon);
+    monday.setDate(week1Mon.getDate() + (week - 1) * 7);
     return monday.toISOString().slice(0, 10);
   }
 
+  /**
+   * ISO 8601: 根据任意日期计算 [ISO年份, 周数, 周一日期]
+   *   与 getMondayOfISOWeek 互为逆运算
+   */
   function getWeekInfo(date) {
-    const d = new Date(date); const dow = d.getDay();
+    const d = new Date(date);
+    // 1. 找到该日期所在周的周一
+    const dow = d.getDay();
     const offset = dow === 0 ? -6 : 1 - dow;
-    const mon = new Date(d); mon.setDate(d.getDate() + offset);
-    const ys = new Date(mon.getFullYear(), 0, 1);
-    const wn = Math.ceil(((mon - ys) / 86400000 + ys.getDay() + 1) / 7);
-    return { year: mon.getFullYear(), week: wn, monday: mon.toISOString().slice(0, 10) };
+    const mon = new Date(d);
+    mon.setDate(d.getDate() + offset);
+    // 2. ISO 年份 = 该周周四所在的年份
+    const thu = new Date(mon);
+    thu.setDate(mon.getDate() + 3);
+    const isoYear = thu.getFullYear();
+    // 3. 计算 ISO 第1周的周一
+    const jan4 = new Date(isoYear, 0, 4);
+    const jan4Dow = jan4.getDay() || 7;
+    const week1Mon = new Date(jan4);
+    week1Mon.setDate(jan4.getDate() - (jan4Dow - 1));
+    // 4. 周数 = 相差天数 / 7 + 1
+    const diffDays = Math.round((mon - week1Mon) / 86400000);
+    const wn = Math.floor(diffDays / 7) + 1;
+    return { year: isoYear, week: wn, monday: mon.toISOString().slice(0, 10) };
   }
   function getSunday(ms) { const d = new Date(ms); d.setDate(d.getDate() + 6); return d.toISOString().slice(0, 10); }
 
@@ -1005,20 +1022,26 @@
   function renderS1(body) {
     const docs = state.doctors;
     let h = ``;
+    // 格式化周一日期
+    const monParts = weekInfo.monday.split('-');
+    const monLabel = `${parseInt(monParts[1])}月${parseInt(monParts[2])}日周一`;
     // ---- 工作周选择器（通过操作页面Ant Design picker DOM） ----
     h += `<div class="sh-subtitle">📅 工作周切换</div>`;
-    h += `<div class="sh-week-picker">`;
+    h += `<div class="sh-week-picker" style="justify-content:space-between;">`;
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="goPrevWeek" title="上一周">◀ 上一周</button>`;
-    h += `<span style="margin:0 6px;font-weight:600;font-size:13px;white-space:nowrap;">${weekInfo.year}年 第${weekInfo.week}周</span>`;
+    h += `<span style="font-weight:600;font-size:13px;white-space:nowrap;"><span style="font-size:10px;font-weight:400;color:#888;">${weekInfo.year}年 </span>第${weekInfo.week}周 <span style="font-size:10px;font-weight:400;color:#888;">· ${monLabel}</span></span>`;
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="goNextWeek" title="下一周">下一周 ▶</button>`;
     h += `</div>`;
-    h += `<div class="sh-week-picker" style="margin-top:6px;">`;
-    h += `<span style="font-size:11px;color:#666;">跳转到第</span>`;
-    h += `<input type="number" id="sh-week-num" value="${weekInfo.week}" min="1" max="53" style="width:55px;text-align:center;" title="输入周数">`;
-    h += `<span style="font-size:11px;color:#666;">周</span>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="confirmWeek">GO</button>`;
+    h += `<div class="sh-week-picker" style="margin-top:6px;justify-content:space-between;align-items:center;">`;
+    const nextWeek = Math.min(weekInfo.week + 1, 53);
+    const nextMonParts = getMondayOfISOWeek(weekInfo.year, nextWeek).split('-');
+    const nextMonLabel = `${parseInt(nextMonParts[1])}月${parseInt(nextMonParts[2])}日周一`;
+    h += `<span style="font-size:11px;color:#666;">跳转至 <span style="font-weight:600;color:#333;">第${nextWeek}周</span> <span style="font-size:10px;color:#888;">· ${nextMonLabel}</span></span>`;
+    h += `<span style="display:flex;align-items:center;gap:4px;">`;
+    h += `<input type="number" id="sh-week-num" value="${nextWeek}" min="1" max="53" style="width:44px;padding:5px 6px;text-align:center;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;" title="输入周数">`;
+    h += `<button class="sh-btn-action sh-btn-primary" data-action="confirmWeek" style="padding:5px 16px;font-size:13px;font-weight:600;">GO</button>`;
+    h += `</span>`;
     h += `</div>`;
-    h += `<div class="sh-help-text" style="margin-top:4px;">周一 ${weekInfo.monday} · 切换后将自动刷新页面数据</div>`;
     // 人员列表
     h += `<div class="sh-divider"></div>`;
     h += `<div class="sh-info-bar info">💡 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员。</div>`;
@@ -1034,7 +1057,7 @@
       let rightHtml = '';
       if (d.type === 'trainee') {
         const selectedId = d.mentorId || '';
-        rightHtml = `<span style="font-size:10px;color:#999;white-space:nowrap;">导师：<select data-action="updateMentor" data-doc="${d.id}" style="font-size:10px;padding:1px 4px;border:1px solid #d9d9d9;border-radius:3px;max-width:120px;" title="指定导师">
+        rightHtml = `<span style="font-size:11px;color:#555;white-space:nowrap;">导师：<select data-action="updateMentor" data-doc="${d.id}" style="font-size:12px;padding:2px 6px;border:1px solid #bbb;border-radius:4px;max-width:130px;color:#333;" title="指定导师">
           ${mentorOptsHtml.replace(`value="${selectedId}"`, `value="${selectedId}" selected`)}
         </select></span>`;
       }
@@ -1050,11 +1073,11 @@
     h += `</ul>`;
     h += `<div class="sh-divider"></div>`;
     h += `<div class="sh-subtitle">📅 工作日 / 节假日设定</div>`;
-    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#1677ff;">蓝色=工作日</span>，灰色=节假日。</div>`;
+    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#1677ff;">蓝色=工作日</span>，白色=节假日。</div>`;
     h += `<div class="sh-workday-row">`;
     for (let d = 0; d < 7; d++) { const wd = (state.workdayConfig || [])[d]; h += `<button class="sh-btn-action sh-btn-sm ${wd ? 'sh-btn-primary' : 'sh-btn-outline'}" data-action="toggleWorkday" data-day="${d}">${A.DAYS[d]}</button>`; }
     h += `</div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:12px;">下一步 → 门诊安排</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:6px;padding:8px 16px;font-size:13px;">下一步 → 门诊安排</button>`;
     body.innerHTML = h;
   }
 
@@ -1104,7 +1127,7 @@
       prevMonday.setDate(prevMonday.getDate() - 7);
       const prevLabel = `${prevMonday.getFullYear()}年 第${getWeekInfo(prevMonday).week}周`;
       s += `<div class="sh-help-text">点击下方按钮，将 <b>${prevLabel}</b> 的门诊安排（总院门诊、高新门诊、梓潼门诊）导入预览。</div>`;
-      s += `<button class="sh-btn-action sh-btn-primary sh-btn-sm sh-btn-block" data-action="fetchPrevWeekOutpatient">📥 导入上一周门诊</button>`;
+      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekOutpatient" style="padding:8px 16px;font-size:13px;">📥 导入上一周门诊</button>`;
       return s;
     }
 
@@ -1166,8 +1189,8 @@
       const prevMonday = new Date(weekInfo.monday);
       prevMonday.setDate(prevMonday.getDate() - 7);
       const prevLabel = `${prevMonday.getFullYear()}年 第${getWeekInfo(prevMonday).week}周`;
-      s += `<div class="sh-help-text">根据 <b>${prevLabel}</b> 的排班数据，自动重建值班医生序列。<br>匹配规则：查找每天有「值班」班型的医生（门诊优先，有门诊的不计入值班）。</div>`;
-      s += `<button class="sh-btn-action sh-btn-primary sh-btn-sm sh-btn-block" data-action="fetchPrevWeekDuty">📥 导入上周值班顺序</button>`;
+      s += `<div class="sh-help-text">根据 <b>${prevLabel}</b> 的排班数据，自动重建值班医生序列。</div>`;
+      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekDuty" style="padding:8px 16px;font-size:13px;">📥 导入上周值班顺序</button>`;
       return s;
     }
 
@@ -1242,8 +1265,8 @@
     for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d=>`<option value="${d.id}" ${did===d.id?'selected':''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
     h += `</div>`;
     h += `<div class="sh-btn-group" style="margin-top:8px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder">🔄 重置默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="sh-cancel-zb"> 假期前一天取消中班</label></div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;">🤖 执行自动排班</button>`;
-    h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty">🗑 清空值班安排</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;padding:8px 16px;font-size:13px;">🤖 执行自动排班</button>`;
+    h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty" style="margin-top:4px;">🗑 清空值班安排</button>`;
     if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:8px;">⚠️ 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
     else h += `<div class="sh-info-bar success" style="margin-top:8px;">✅ 无冲突</div>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 → 调整确认</button></div>`;
@@ -1282,7 +1305,7 @@
     // ===== （三）一键填补空缺 =====
     h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（三）一键填补空缺</div>`;
     h += `<div class="sh-help-text">依据设定的工作日/节假日：<br>工作日→<b style="color:#2196f3;">白班普</b> · 节假日→<b style="color:#999;">休假</b></div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty" style="margin-bottom:8px;">🪣 一键填空（白班普/休）</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty" style="margin-bottom:8px;padding:8px 16px;font-size:13px;">🪣 一键填空（白班普/休）</button>`;
 
     // ===== （四）规培生一键安排 =====
     if (trainees.length) {
@@ -1304,7 +1327,7 @@
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="exportFull">📤 导出完整配置</button>`;
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importFull">📥 导入完整配置</button>`;
     h += `</div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll" style="margin-top:8px;">✅ 提交所有修改到系统</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll" style="margin-top:10px;padding:9px 16px;font-size:13px;">✅ 提交所有修改到系统</button>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="4">← 上一步</button></div>`;
     body.innerHTML = h;
   }
@@ -1793,9 +1816,8 @@
    *
    * 匹配规则：
    *   1. 查找当天有「值班」班型的医生（am 或 pm 均可）
-   *   2. 若当天多人值班，取第一个
-   *   3. 若该医生当天同时有门诊（总院/高新/梓潼），跳过（门诊 > 值班）
-   *   4. 位置[0]的「上周日」需要额外拉取上上周日的数据
+   *   2. 若当天多人值班，取第一个（去重后）
+   *   3. 位置[0]的「上周日」需要额外拉取上上周日的数据
    */
   async function fetchAndPreviewPrevWeekDuty() {
     if (!state.doctors.length) { showToast('请先确保人员数据已加载', 'warn'); return; }
@@ -1849,25 +1871,6 @@
           // 检查该医生是否在当前周名单中
           const doc = getDoctor(eid);
           if (!doc) continue;
-
-          // 门诊 > 值班：检查该医生在【目标日期所在周】是否有门诊
-          // 目标日期可能跨两个区间（上上周日 + 上周一~日），分别用对应周一做 dayIndex
-          const refMonday = targetDate < lms ? pss : lms;
-          const di = getDayIndexFromMonday(targetDate, refMonday);
-          if (di >= 0 && di < 7) {
-            // 注意：这里检查的是 state 中已加载的【门诊数据】，但 state 存的是本周的。
-            // 对于上周的日期，门诊数据可能不匹配，所以仅做宽松排除：
-            // 只有当该医生在【本周同日】有门诊时才跳过（门诊通常是跨周固定的）
-            const genDay = state.outpatientGeneral[di] || { am: null, pm: null };
-            const hasGaoxin = (state.outpatientGaoxin || []).some(a => a.dayIdx === di && a.doctorId === eid);
-            const hasZitong = (state.outpatientZitong || []).some(a => a.dayIdx === di && a.doctorId === eid);
-            const hasSimple = (state.outpatientSimple || []).some(a => a.dayIdx === di && a.doctorId === eid);
-            const hasAnyOutpatient = (genDay.am === eid || genDay.pm === eid || hasGaoxin || hasZitong || hasSimple);
-            if (hasAnyOutpatient) {
-              console.log('[排班辅助]   ⏭️ 跳过' + eid + '(' + doc.name + ') — 同日有门诊');
-              continue;
-            }
-          }
 
           candidates.push({ doctorId: eid, name: doc.name });
         }

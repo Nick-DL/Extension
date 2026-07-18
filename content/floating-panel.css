@@ -452,6 +452,7 @@
   gap: 6px;
   margin-top: 10px;
 }
+.sh-nav-row .sh-btn-action { padding: 7px 14px; font-size: 13px; }
 .sh-nav-row .sh-btn-action:first-child { flex: 0 0 auto; }
 .sh-nav-row .sh-btn-action:last-child { flex: 1; }
 
