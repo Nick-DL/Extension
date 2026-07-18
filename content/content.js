@@ -32,6 +32,7 @@
   let dragSrcIdx = null, dragOpacityTimer = null;
   let prevWeekOutpatientPreview = null;  // { outpatientGeneral, outpatientGaoxin, outpatientZitong, conflicts:[] }
   let prevWeekOutpatientLoaded = false;
+  let prevWeekDutyOrderPreview = null;   // { sourceMonday, order:[doctorId×8], details:[{dayIdx,dayLabel,doctorId,doctorName}], missingDays:[] }
 
   // ==================== 工具函数 ====================
   function getDoctor(id) { return A.getDoctor(state.doctors, id); }
@@ -99,13 +100,16 @@
       syncStateToBackground();
       chrome.runtime.sendMessage({ type: 'UPDATE_WEEK_INFO', weekInfo });
       togglePanel(true);
+      applyClassBadgeColors();
+      setupTableWatcher();
     }).catch(err => { console.error('[排班辅助] 数据加载失败:', err.message); showToast('数据加载失败', 'error'); });
   }
 
   function onDisabled() {
     togglePanel(false); document.getElementById('sh-quick-entry').classList.add('hidden');
     if (restoreFetch) { restoreFetch(); restoreFetch = null; }
-    removeClassColorBars(); showToast('排班辅助插件已关闭', 'info');
+    removeClassColorBars(); clearPageTableCells(); clearClassBadgeColors(); teardownTableWatcher();
+    showToast('排班辅助插件已关闭', 'info');
   }
 
   // ==================== 周信息检测 ====================
@@ -212,6 +216,20 @@
         const empIds = state.doctors.map(d => d.id);
         const sr = await ScheduleAPI.fetchEmpSchedules({ empIds: empIds, from: weekInfo.monday, to: getSunday(weekInfo.monday) });
         console.log('[排班辅助] empSchedules 原始响应类型:', typeof sr.data, sr.data && !Array.isArray(sr.data) ? '(对象,keys=' + Object.keys(sr.data).join(',') + ')' : '');
+        // ---------- 输出周一所有医生的排班原始数据 ----------
+        if (!sr.error && sr.data) {
+          var scheds = Array.isArray(sr.data) ? sr.data : (sr.data.employees || sr.data.data || sr.data.rows || sr.data.list || []);
+          var monDate = weekInfo.monday;
+          var mondayScheds = scheds.filter(function (r) {
+            var wd = (r.workDate || r.date || '').slice(0, 10);
+            return wd === monDate;
+          });
+          console.log('[排班辅助] 📅 周一(' + monDate + ') 原始排班数据 (' + mondayScheds.length + '条):');
+          mondayScheds.forEach(function (r, i) {
+            console.log('  [' + (i + 1) + ']', JSON.parse(JSON.stringify(r)));
+          });
+        }
+        // ----------------------------------------------------
         if (!sr.error && sr.data) {
           parseSchedulesFromAPI(sr.data);
           console.log('[排班辅助] 加载排班: 门诊' + Object.values(state.outpatientGeneral).filter(g => g.am || g.pm).length +
@@ -257,6 +275,7 @@
     }
 
     state.outpatientGeneral = {}; state.dutyAssigned = {}; state.special = {};
+    state.outpatientSimple = []; state.outpatientGaoxin = []; state.outpatientZitong = [];
     for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
     const m = new Date(weekInfo.monday); const d2i = {};
     for (let d = 0; d < 7; d++) { const dt = new Date(m); dt.setDate(m.getDate() + d); d2i[dt.toISOString().slice(0, 10)] = d; }
@@ -266,7 +285,7 @@
     var cnMismatchSamples = []; // 记录classIdMap找不到的样本
     for (let r of scheds) {
       const eid = String(r.empId || r.employeeId || ''), wd = (r.workDate || r.date || '').slice(0, 10);
-      const rawId = r.id || r.classId || r.scheduleClassId || '';
+      const rawId = r.classId || r.scheduleClassId || '';
       const classIdKey = String(rawId);
       const fromMap = classIdMap[classIdKey];
       const cn = fromMap || r.name || r.className || '';
@@ -282,16 +301,37 @@
       if (di === undefined) { skippedNoDate++; continue; }
       parsedOk++;
       const sl = r.segment ? (r.segment === 1 ? 'am' : 'pm') : (r.slot || r.ampm || r.timeSlot || 'am');
-      if (A.CLINIC_TYPES.includes(cn)) {
-        if (cn === '总院门诊') { if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null }; state.outpatientGeneral[di][sl] = eid; }
-        else if (cn === '高新门诊') { if (!state.outpatientGaoxin.find(a => a.dayIdx === di && a.doctorId === eid)) state.outpatientGaoxin.push({ dayIdx: di, doctorId: eid }); }
-        else if (cn === '梓潼门诊') { if (!state.outpatientZitong.find(a => a.dayIdx === di && a.doctorId === eid)) state.outpatientZitong.push({ dayIdx: di, doctorId: eid }); }
-      } else if (A.SPECIAL_TYPES.includes(cn)) {
-        if (!state.special[eid]) state.special[eid] = {}; if (!state.special[eid][di]) state.special[eid][di] = { am: null, pm: null };
-        state.special[eid][di][sl] = cn;
-      } else {
-        if (!state.dutyAssigned[eid]) state.dutyAssigned[eid] = {}; if (!state.dutyAssigned[eid][di]) state.dutyAssigned[eid][di] = { am: null, pm: null };
-        state.dutyAssigned[eid][di][sl] = cn;
+      // amount>=1 表示全天班（如脱产学习），需同时写入上午和下午
+      const applySlots = (r.amount >= 1) ? ['am', 'pm'] : [sl];
+      for (var si = 0; si < applySlots.length; si++) {
+        var curSlot = applySlots[si];
+        if (A.CLINIC_TYPES.includes(cn)) {
+          if (cn === '总院门诊') {
+            if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null };
+            if (state.outpatientGeneral[di][curSlot] && state.outpatientGeneral[di][curSlot] !== eid) {
+              // 该时段已有其他医生的总院门诊 → 当前这条转为简易门诊
+              if (!state.outpatientSimple) state.outpatientSimple = [];
+              if (!state.outpatientSimple.find(function (a) { return a.dayIdx === di && a.slot === curSlot && a.doctorId === eid; })) {
+                state.outpatientSimple.push({ dayIdx: di, slot: curSlot, doctorId: eid });
+                var doc1 = getDoctor(state.outpatientGeneral[di][curSlot]);
+                var doc2 = getDoctor(eid);
+                console.log('[排班辅助] ⚠️ ' + A.DAYS[di] + A.SLOT_LABELS[curSlot] +
+                  ' 存在两个总院门诊: ' + (doc1 ? doc1.name : state.outpatientGeneral[di][curSlot]) +
+                  '(保留) / ' + (doc2 ? doc2.name : eid) + '(→简易门诊)');
+              }
+            } else {
+              state.outpatientGeneral[di][curSlot] = eid;
+            }
+          }
+          else if (cn === '高新门诊') { if (!state.outpatientGaoxin.find(a => a.dayIdx === di && a.doctorId === eid)) state.outpatientGaoxin.push({ dayIdx: di, doctorId: eid }); }
+          else if (cn === '梓潼门诊') { if (!state.outpatientZitong.find(a => a.dayIdx === di && a.doctorId === eid)) state.outpatientZitong.push({ dayIdx: di, doctorId: eid }); }
+        } else if (A.SPECIAL_TYPES.includes(cn)) {
+          if (!state.special[eid]) state.special[eid] = {}; if (!state.special[eid][di]) state.special[eid][di] = { am: null, pm: null };
+          state.special[eid][di][curSlot] = cn;
+        } else {
+          if (!state.dutyAssigned[eid]) state.dutyAssigned[eid] = {}; if (!state.dutyAssigned[eid][di]) state.dutyAssigned[eid][di] = { am: null, pm: null };
+          state.dutyAssigned[eid][di][curSlot] = cn;
+        }
       }
     }
     console.log('[排班辅助] 解析结果: 成功=' + parsedOk + ' 缺员工=' + skippedNoEid + ' 缺班型=' + skippedNoCn + ' 缺日期=' + skippedNoDate);
@@ -350,44 +390,53 @@
     for (let r of scheds) {
       const eid = String(r.empId || r.employeeId || '');
       const wd = (r.workDate || r.date || '').slice(0, 10);
-      const cn = classIdMap[String(r.id || r.classId || r.scheduleClassId || '')] || r.name || r.className || '';
+      const cn = classIdMap[String(r.classId || r.scheduleClassId || '')] || r.name || r.className || '';
       const di = d2i[wd];
       if (di === undefined || !eid || !cn) continue;
 
       const sl = r.segment ? (r.segment === 1 ? 'am' : 'pm') : (r.slot || r.ampm || r.timeSlot || 'am');
+      const applySlots = (r.amount >= 1) ? ['am', 'pm'] : [sl];
 
       // 检查当前周是否有同名医生（ID匹配）
       const docExists = state.doctors.some(d => d.id === eid);
       if (!docExists) continue;
 
       // 门诊数据预置
-      if (cn === '总院门诊') {
-        if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null };
-        if (!state.outpatientGeneral[di][sl]) {
-          state.outpatientGeneral[di][sl] = eid;
-          outGeneralCount++;
+      for (var si2 = 0; si2 < applySlots.length; si2++) {
+        var curSlot2 = applySlots[si2];
+        if (cn === '总院门诊') {
+          if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null };
+          if (!state.outpatientGeneral[di][curSlot2]) {
+            state.outpatientGeneral[di][curSlot2] = eid;
+            outGeneralCount++;
+          } else if (state.outpatientGeneral[di][curSlot2] !== eid) {
+            // 该时段已有其他医生的总院门诊 → 当前转为简易门诊
+            if (!state.outpatientSimple) state.outpatientSimple = [];
+            if (!state.outpatientSimple.find(function (a) { return a.dayIdx === di && a.slot === curSlot2 && a.doctorId === eid; })) {
+              state.outpatientSimple.push({ dayIdx: di, slot: curSlot2, doctorId: eid });
+            }
+          }
+        } else if (cn === '高新门诊') {
+          if (!state.outpatientGaoxin.find(a => a.dayIdx === di && a.doctorId === eid)) {
+            state.outpatientGaoxin.push({ dayIdx: di, doctorId: eid });
+            outGaoxinCount++;
+          }
+        } else if (cn === '梓潼门诊') {
+          if (!state.outpatientZitong.find(a => a.dayIdx === di && a.doctorId === eid)) {
+            state.outpatientZitong.push({ dayIdx: di, doctorId: eid });
+            outZitongCount++;
+          }
         }
-      } else if (cn === '高新门诊') {
-        if (!state.outpatientGaoxin.find(a => a.dayIdx === di && a.doctorId === eid)) {
-          state.outpatientGaoxin.push({ dayIdx: di, doctorId: eid });
-          outGaoxinCount++;
-        }
-      } else if (cn === '梓潼门诊') {
-        if (!state.outpatientZitong.find(a => a.dayIdx === di && a.doctorId === eid)) {
-          state.outpatientZitong.push({ dayIdx: di, doctorId: eid });
-          outZitongCount++;
-        }
-      }
 
-      // 值班数据预置（中班/值班/夜休）
-      if (cn === '值班' || cn === '中班' || cn === '夜休') {
-        if (!state.dutyAssigned[eid]) state.dutyAssigned[eid] = {};
-        if (!state.dutyAssigned[eid][di]) state.dutyAssigned[eid][di] = { am: null, pm: null };
-        // 仅填充未被门诊占用的时段
-        const genDay = state.outpatientGeneral[di] || { am: null, pm: null };
-        if (!genDay[sl] || genDay[sl] !== eid) {
-          state.dutyAssigned[eid][di][sl] = cn;
-          dutyCount++;
+        // 值班数据预置（中班/值班/夜休）
+        if (cn === '值班' || cn === '中班' || cn === '夜休') {
+          if (!state.dutyAssigned[eid]) state.dutyAssigned[eid] = {};
+          if (!state.dutyAssigned[eid][di]) state.dutyAssigned[eid][di] = { am: null, pm: null };
+          const genDay = state.outpatientGeneral[di] || { am: null, pm: null };
+          if (!genDay[curSlot2] || genDay[curSlot2] !== eid) {
+            state.dutyAssigned[eid][di][curSlot2] = cn;
+            dutyCount++;
+          }
         }
       }
     }
@@ -424,13 +473,330 @@
   // ==================== 色条 ====================
   function applyClassColorBar(cell, st) { const o = cell.querySelector('.sh-class-color-bar'); if (o) o.remove(); if (!st) return; const c = A.TYPE_COLORS[st]; if (!c) return; cell.style.position = cell.style.position || 'relative'; const b = document.createElement('div'); b.className = 'sh-class-color-bar'; b.style.background = c; cell.appendChild(b); }
   function removeClassColorBars() { document.querySelectorAll('.sh-class-color-bar').forEach(b => b.remove()); }
-  function applyToPageTable() { /* TODO: 适配实际页面DOM */ }
+  // 缓存：页面系统中表示"空白"的 CSS Module 类名（如 noClass___1hbgr），首次遇到时自动探测
+  let _noClassClsCache = null;
+
+  function applyToPageTable(styleOnly) {
+    styleOnly = styleOnly || false;
+    // styleOnly=true → 只改样式不改文本（手动编辑后被动刷新）
+    // styleOnly=false → 改文本+样式（插件主动渲染）
+    const tbody = document.querySelector('.ant-table-tbody');
+    if (!tbody) { console.log('[排班辅助] ⚠️ 未找到页面排班表格'); return 0; }
+
+    const rows = tbody.querySelectorAll('tr.ant-table-row');
+    if (!rows.length) { console.log('[排班辅助] ⚠️ 表格无数据行'); return 0; }
+
+    // 构建 工号(院内工号) → row 映射
+    const rowMap = {};
+    let cellsPerDay = 1; // 1=单格模式, 2=两端排班模式
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 15) continue;
+      const empNumber = cells[7].textContent.trim();
+      if (empNumber) rowMap[empNumber] = { row, cells };
+      // 检测模式：两端排班每天两列（班次1+班次2），单格模式每天一列
+      if (cellsPerDay === 1 && cells.length >= 24) cellsPerDay = 2;
+    }
+
+    console.log('[排班辅助] 表格模式: ' + (cellsPerDay === 2 ? '两端排班(每天2列)' : '单格(每天1列)'));
+
+    // 根据 styleOnly 选择策略：true=只改样式不改文本，false=改文本+样式
+    function _apply(div, type) {
+      if (styleOnly) { applyStyleByDomText(div); }
+      else if (type) { applyClassDivStyle(div, type); }
+      else { resetClassDiv(div); }
+    }
+
+    let updatedCount = 0, skippedCount = 0;
+
+    for (const doc of state.doctors) {
+      const docNum = String(doc.number);
+      const entry = rowMap[docNum];
+      if (!entry) { skippedCount++; continue; }
+
+      const { cells } = entry;
+      for (let d = 0; d < 7; d++) {
+        if (cellsPerDay === 2) {
+          // ===== 两端排班模式：每天两列 =====
+          const amCell = cells[8 + d * 2];      // 班次1 = 上午
+          const pmCell = cells[8 + d * 2 + 1];   // 班次2 = 下午
+          if (!amCell || !pmCell) continue;
+
+          const amDiv = amCell.querySelector('[class*="tooltip"] > div');
+          const pmDiv = pmCell.querySelector('[class*="tooltip"] > div');
+          if (!amDiv || !pmDiv) continue;
+
+          // 探测空白类名
+          if (!_noClassClsCache) detectNoClass(amDiv);
+
+          const amType = A.getSlotSchedule(state, doc.id, d, 'am');
+          const pmType = A.getSlotSchedule(state, doc.id, d, 'pm');
+
+          _apply(amDiv, amType);
+          _apply(pmDiv, pmType);
+
+          if (amType || pmType) updatedCount++;
+        } else {
+          // ===== 单格模式：每天一列 =====
+          const cell = cells[8 + d];
+          if (!cell) continue;
+
+          const classDivs = cell.querySelectorAll('[class*="tooltip"] > div');
+          if (classDivs.length === 0) continue;
+
+          if (!_noClassClsCache) detectNoClass(classDivs[0]);
+
+          const amType = A.getSlotSchedule(state, doc.id, d, 'am');
+          const pmType = A.getSlotSchedule(state, doc.id, d, 'pm');
+
+          if (classDivs.length === 1) {
+            // 全天班（amount=1）：只有一个 tooltip，如"脱产学习"
+            const onlyDiv = classDivs[0];
+            if (amType || pmType) {
+              _apply(onlyDiv, amType || pmType);
+              updatedCount++;
+            } else {
+              _apply(onlyDiv, null);
+            }
+          } else {
+            // 半天班（两个0.5）：两个 tooltip，分别对应上午/下午
+            const amDiv = classDivs[0];
+            const pmDiv = classDivs[1];
+
+            if (!amType && !pmType) {
+              _apply(amDiv, null); _apply(pmDiv, null);
+              continue;
+            }
+
+            _apply(amDiv, amType);
+            _apply(pmDiv, pmType);
+
+            if (amType || pmType) updatedCount++;
+          }
+        }
+      }
+    }
+
+    console.log('[排班辅助] 🎨 页面表格更新: ' + updatedCount + ' 个单元格, 跳过 ' + skippedCount + ' 人(不在表中)');
+    return updatedCount;
+  }
+
+  /** 探测 noClass___xxxx 空白类名 */
+  function detectNoClass(sampleDiv) {
+    const found = Array.from(sampleDiv.classList).find(function (c) { return c.indexOf('noClass') === 0 || c.indexOf('NoClass') === 0; });
+    if (found) { _noClassClsCache = found; console.log('[排班辅助] 🔍 探测到空白类名:', _noClassClsCache); }
+  }
+
+  /** 安全更新 div 文本，保留子元素（避免 React 崩溃） */
+  function setDivText(div, text) {
+    if (!div) return;
+    var textNode = null;
+    for (var i = 0; i < div.childNodes.length; i++) {
+      if (div.childNodes[i].nodeType === 3) { textNode = div.childNodes[i]; break; }
+    }
+    if (textNode) {
+      textNode.nodeValue = text;
+    } else {
+      div.insertBefore(document.createTextNode(text), div.firstChild);
+    }
+  }
+
+  /** 隐藏 div 内的子元素（如红色下划线），但不删除 DOM 节点 */
+  function hideChildElements(div) {
+    if (!div) return;
+    for (var i = 0; i < div.children.length; i++) {
+      div.children[i].style.display = 'none';
+    }
+  }
+
+  /** 重置单个班型格为空白状态 */
+  function resetClassDiv(div) {
+    if (!div) return;
+    div.style.cssText = '';
+    setDivText(div, '\u00A0');
+    hideChildElements(div);
+    if (_noClassClsCache) div.classList.add(_noClassClsCache);
+  }
+
+  /** 给单个班型格应用班型样式 */
+  function applyClassDivStyle(div, typeName) {
+    if (!div) return;
+    if (_noClassClsCache) div.classList.remove(_noClassClsCache);
+    setDivText(div, typeName);
+    hideChildElements(div);
+    const c = A.TYPE_COLORS[typeName];
+    if (c) {
+      div.style.backgroundColor = c + '22';
+      div.style.color = c;
+      div.style.fontWeight = '600';
+      div.style.padding = '2px 6px';
+      div.style.borderRadius = '4px';
+      div.style.fontSize = '14px';
+      div.style.borderLeft = '3px solid ' + c;
+    }
+  }
+
+  /** 仅根据 DOM 中已有文本应用样式（不修改文本），用于手动编辑后的被动刷新 */
+  function applyStyleByDomText(div) {
+    if (!div) return;
+    var text = div.textContent.trim();
+    if (!text || text === '\u00A0') {
+      div.style.cssText = '';
+      if (_noClassClsCache) div.classList.add(_noClassClsCache);
+    } else {
+      if (_noClassClsCache) div.classList.remove(_noClassClsCache);
+      var c = A.TYPE_COLORS[text];
+      if (c) {
+        div.style.cssText = '';
+        div.style.backgroundColor = c + '22';
+        div.style.color = c;
+        div.style.fontWeight = '600';
+        div.style.padding = '2px 6px';
+        div.style.borderRadius = '4px';
+        div.style.fontSize = '14px';
+        div.style.borderLeft = '3px solid ' + c;
+      }
+    }
+    hideChildElements(div);
+  }
+
+  /** 清除页面表格中插件添加的所有样式和内容 */
+  function clearPageTableCells() {
+    const tbody = document.querySelector('.ant-table-tbody');
+    if (!tbody) return;
+    const classDivs = tbody.querySelectorAll('[class*="tooltip"] > div');
+    classDivs.forEach(div => resetClassDiv(div));
+    removeClassColorBars();
+    console.log('[排班辅助] 🧹 页面表格已清除');
+  }
+
+  // ==================== 常用班次标签配色 ====================
+
+  /** 给"常用班次"区域的班型标签应用 TYPE_COLORS 配色 */
+  function applyClassBadgeColors() {
+    // 找到"常用班次"Tab面板：id 格式如 rc-tabs-1-panel-常用班次
+    const panel = document.querySelector('[id*="-panel-"][id*="常用班次"]');
+    if (!panel) { console.log('[排班辅助] ⚠️ 未找到常用班次面板'); return; }
+
+    // 每个标签：.ant-space-item > div（第一个 div 就是班型名容器）
+    const items = panel.querySelectorAll('.ant-space-item');
+    if (!items.length) return;
+
+    let count = 0;
+    items.forEach(function (item) {
+      const badge = item.querySelector('div');
+      if (!badge) return;
+      const name = badge.textContent.trim();
+      const color = A.TYPE_COLORS[name];
+      if (!color) return;
+
+      // 应用颜色
+      badge.style.backgroundColor = color;
+      badge.style.color = '#fff';
+      badge.style.fontWeight = '600';
+      badge.style.padding = '4px 12px';
+      badge.style.borderRadius = '6px';
+      badge.style.fontSize = '13px';
+      badge.style.display = 'inline-block';
+      badge.style.cursor = 'pointer';
+      count++;
+    });
+
+    console.log('[排班辅助] 🏷️ 常用班次标签配色: ' + count + ' 个');
+  }
+
+  /** 清除常用班次标签的插件样式 */
+  function clearClassBadgeColors() {
+    const panel = document.querySelector('[id*="-panel-"][id*="常用班次"]');
+    if (!panel) return;
+    const items = panel.querySelectorAll('.ant-space-item');
+    items.forEach(function (item) {
+      const badge = item.querySelector('div');
+      if (!badge) return;
+      badge.style.cssText = '';
+    });
+  }
+
+  // ==================== 自动刷新样式（监听页面变化） ====================
+
+  var _tableObserver = null;
+  var _refreshTimer = null;
+  var _refreshing = false;       // 防重入
+
+  /** 主动刷新表格样式 + 班型标签 */
+  function _scheduleRefreshDisplay() {
+    if (_refreshTimer) clearTimeout(_refreshTimer);
+    _refreshTimer = setTimeout(function () {
+      _refreshTimer = null;
+      if (_refreshing) return;
+      _refreshing = true;
+      try {
+        _noClassClsCache = null;
+        applyToPageTable(true);
+        applyClassBadgeColors();
+      } finally {
+        _refreshing = false;
+      }
+      // 二次检查：医院系统可能分批渲染（先AM后PM），300ms后再补一次
+      setTimeout(function () {
+        if (_refreshing) return;
+        _refreshing = true;
+        try { applyToPageTable(true); } finally { _refreshing = false; }
+      }, 300);
+    }, 500);
+  }
+
+  /** 启动所有主动监听 */
+  function setupTableWatcher() {
+    // ---- MutationObserver：监听表格结构变化（切换周数 / 开关两端排班都会重渲染tbody） ----
+    var tableContainer = document.querySelector('.ant-table-container');
+    if (tableContainer && !_tableObserver) {
+      _tableObserver = new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var m = mutations[i];
+          // 任何元素节点的添加都触发（TR=整行重渲染, DIV=PM时段延迟加载到已有单元格内）
+          if (m.type === 'childList' && m.addedNodes.length > 0) {
+            for (var k = 0; k < m.addedNodes.length; k++) {
+              if (m.addedNodes[k].nodeType === 1) {
+                _scheduleRefreshDisplay();
+                return;
+              }
+            }
+          }
+        }
+      });
+      _tableObserver.observe(tableContainer, {
+        childList: true,
+        subtree: true
+      });
+      console.log('[排班辅助] 👁️ 表格变化监听已启动（切换周数 / 两端排班）');
+    }
+
+    // ---- 监听"两端排班"复选框（兜底：某些情况下 MutationObserver 可能不触发） ----
+    var allLabels = document.querySelectorAll('.ant-checkbox-wrapper');
+    for (var j = 0; j < allLabels.length; j++) {
+      var label = allLabels[j];
+      if (label.textContent.indexOf('两端排班') !== -1 || label.textContent.indexOf('两端') !== -1) {
+        label.addEventListener('click', function () {
+          setTimeout(function () { _scheduleRefreshDisplay(); }, 350);
+        });
+        console.log('[排班辅助] 👁️ 两端排班开关监听已绑定');
+        break;
+      }
+    }
+  }
+  /** 停止所有主动监听 */
+  function teardownTableWatcher() {
+    if (_tableObserver) { _tableObserver.disconnect(); _tableObserver = null; }
+    if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
+  }
 
   // ==================== 提交 ====================
   async function submitAllChanges() {
     if (!confirm('确定提交所有排班修改？\n提交成功后请刷新页面查看。')) return;
     try {
       const bd = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday);
+      console.log('[排班辅助] 📤 提交数据 (' + bd.length + '条):', JSON.stringify(bd.slice(0, 3)) + (bd.length > 3 ? '...' : ''));
       if (!bd.length) { showToast('没有需要提交的修改', 'warn'); return; }
       const resp = await ScheduleAPI.appendUsualClass(bd);
       if (resp.error) { showToast('提交失败: ' + (resp.message || '未知错误'), 'error'); return; }
@@ -502,6 +868,9 @@
         case 'fetchPrevWeekOutpatient': fetchAndPreviewPrevWeekOutpatient(); break;
         case 'applyPrevWeekOutpatient': applyPrevWeekOutpatient(); break;
         case 'clearPrevWeekPreview': clearPrevWeekPreview(); break;
+        case 'fetchPrevWeekDuty': fetchAndPreviewPrevWeekDuty(); break;
+        case 'applyPrevWeekDutyOrder': applyPrevWeekDutyOrder(); break;
+        case 'clearPrevWeekDutyPreview': clearPrevWeekDutyPreview(); break;
       }
     });
 
@@ -630,7 +999,7 @@
   }
 
   // ==================== 面板渲染 ====================
-  function renderPanel() { const b = document.getElementById('sh-panel-body'); if (!b) return; switch (state.currentStep) { case 1: renderS1(b); break; case 2: renderS2(b); break; case 3: renderS3(b); break; case 4: renderS4(b); break; case 5: renderS5(b); break; } }
+  function renderPanel() { const b = document.getElementById('sh-panel-body'); if (!b) return; switch (state.currentStep) { case 1: renderS1(b); break; case 2: renderS2(b); break; case 3: renderS3(b); break; case 4: renderS4(b); break; case 5: renderS5(b); break; } applyToPageTable(); }
 
   // ===== S1: 人员 =====
   function renderS1(body) {
@@ -788,6 +1157,55 @@
     return s;
   }
 
+  // ===== 上周值班顺序导入预览渲染 =====
+  function renderPrevWeekDutySection() {
+    let s = `<div class="sh-divider"></div>`;
+    s += `<div class="sh-subtitle" style="color:#ff9800;">📥 从上周导入值班顺序</div>`;
+
+    if (!prevWeekDutyOrderPreview) {
+      const prevMonday = new Date(weekInfo.monday);
+      prevMonday.setDate(prevMonday.getDate() - 7);
+      const prevLabel = `${prevMonday.getFullYear()}年 第${getWeekInfo(prevMonday).week}周`;
+      s += `<div class="sh-help-text">根据 <b>${prevLabel}</b> 的排班数据，自动重建值班医生序列。<br>匹配规则：查找每天有「值班」班型的医生（门诊优先，有门诊的不计入值班）。</div>`;
+      s += `<button class="sh-btn-action sh-btn-primary sh-btn-sm sh-btn-block" data-action="fetchPrevWeekDuty">📥 导入上周值班顺序</button>`;
+      return s;
+    }
+
+    const preview = prevWeekDutyOrderPreview;
+
+    // 状态标签
+    s += `<div class="sh-info-bar success" style="margin-bottom:6px;">✅ 已重建 <b>${preview.foundCount}/8</b> 位值班顺序`;
+    if (preview.missingDays.length > 0) {
+      s += ` · ⚠️ 缺失：${preview.missingDays.join('、')}`;
+    }
+    s += `</div>`;
+
+    // 预览表格
+    s += `<div style="max-height:220px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px;margin-bottom:8px;">`;
+    s += `<table style="width:100%;font-size:10px;border-collapse:collapse;">`;
+    s += `<tr style="background:#fafafa;"><th style="padding:3px 4px;text-align:center;width:28px;">#</th><th style="padding:3px 4px;">值班日</th><th style="padding:3px 4px;">匹配医生</th></tr>`;
+    for (let i = 0; i < 8; i++) {
+      const det = preview.details[i] || { dayLabel: '—', doctorName: '—' };
+      const doc = det.doctorId ? getDoctor(det.doctorId) : null;
+      const hasMatch = !!det.doctorId;
+      s += `<tr style="border-bottom:1px solid #f0f0f0;${hasMatch ? '' : 'background:#fffbe6;'}">`;
+      s += `<td style="padding:3px 4px;text-align:center;font-weight:600;">${i}</td>`;
+      s += `<td style="padding:3px 4px;${hasMatch ? '' : 'color:#faad14;'}">${det.dayLabel}</td>`;
+      s += `<td style="padding:3px 4px;${hasMatch ? 'color:#1677ff;' : 'color:#ccc;'}">${hasMatch ? (doc ? doc.name : det.doctorId) : '未匹配'}</td>`;
+      s += `</tr>`;
+    }
+    s += `</table></div>`;
+
+    // 操作按钮
+    s += `<div class="sh-btn-group">`;
+    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekDutyOrder" style="flex:2;">✅ 应用此顺序</button>`;
+    s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekDuty" style="flex:1;">🔄 重新加载</button>`;
+    s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearPrevWeekDutyPreview" style="flex:1;">✕ 清除</button>`;
+    s += `</div>`;
+
+    return s;
+  }
+
   // ===== S3: 特殊安排 =====
   function renderS3(body) {
     let h = `<div class="sh-info-bar info">💡 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
@@ -815,6 +1233,10 @@
     if (!state.dutyOrder || state.dutyOrder.length !== 8) state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
     const order = state.dutyOrder || [], pool = A.getDutyDoctorPool(state.doctors), flags = state.baiban1Flags || [];
     let h = `<div class="sh-info-bar info">💡· 按住 ⋮⋮ 拖拽调整顺序。<br>· 节假日的中班自动转为休假。<br>· 已有安排不会被覆盖，安排后与门诊等冲突时，相应格子会闪烁提示。<br>· 重新执行自动排班，请先点清空按钮。</div>`;
+
+    // ---- 导入上周值班顺序区域 ----
+    h += renderPrevWeekDutySection();
+
     h += `<div class="sh-subtitle">📋 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id=>id&&getDoctor(id)).length}/8)</span></div>`;
     h += `<div id="sh-duty-order">`;
     for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d=>`<option value="${d.id}" ${did===d.id?'selected':''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
@@ -1129,7 +1551,7 @@
     const pme = getSunday(pms);
 
     showToast('正在加载上周门诊数据...', 'info');
-    console.log('[排班辅助] 拉取上周(', pms, '~', pme, ')门诊数据...');
+    console.log('[排班辅助] 拉取上周(', pms, '~', pme, ')门诊数据... classIdMap有', Object.keys(classIdMap).length, '个映射');
 
     try {
       const eids = state.doctors.map(d => d.id);
@@ -1154,35 +1576,53 @@
       for (let d = 0; d < 7; d++) previewGeneral[d] = { am: [], pm: [] };
 
       let totalParsed = 0;
+      var skippedPrevNoEid = 0, skippedPrevNoCn = 0, skippedPrevNoDate = 0, skippedPrevNoDoc = 0, skippedPrevNonOutpatient = 0;
+      var prevCnSamples = {}; // 统计所有解析到的班型名称
 
       for (let r of scheds) {
         const eid = String(r.empId || r.employeeId || '');
         const wd = (r.workDate || r.date || '').slice(0, 10);
-        const cn = classIdMap[String(r.id || r.classId || r.scheduleClassId || '')] || r.name || r.className || '';
+        // 优先用 classId / scheduleClassId 查 classIdMap，回退到 name/className 直接匹配
+        // 注意：r.id 是排班记录ID，不是班型ID，不能用于 classIdMap 查找
+        var cn = classIdMap[String(r.classId || r.scheduleClassId || '')]
+          || r.name || r.className || '';
+        // 兜底：如果 cn 不在已知班型列表中，尝试直接用 r.name / r.className
+        if (cn && !A.SCHEDULE_TYPES.includes(cn) && !A.CLINIC_TYPES.includes(cn) && !A.SPECIAL_TYPES.includes(cn) && !A.DUTY_TYPES.includes(cn)) {
+          cn = r.name || r.className || cn;
+        }
         const di = d2i[wd];
-        if (di === undefined || !eid || !cn) continue;
+        if (!eid) { skippedPrevNoEid++; continue; }
+        if (!cn) { skippedPrevNoCn++; continue; }
+        if (di === undefined) { skippedPrevNoDate++; continue; }
 
         // 仅检查当前周存在的医生
         const docExists = state.doctors.some(d => d.id === eid);
-        if (!docExists) continue;
+        if (!docExists) { skippedPrevNoDoc++; continue; }
+
+        // 统计班型
+        prevCnSamples[cn] = (prevCnSamples[cn] || 0) + 1;
 
         const sl = r.segment ? (r.segment === 1 ? 'am' : 'pm') : (r.slot || r.ampm || r.timeSlot || 'am');
+        const applySlots = (r.amount >= 1) ? ['am', 'pm'] : [sl];
 
-        if (cn === '总院门诊') {
-          if (!previewGeneral[di]) previewGeneral[di] = { am: [], pm: [] };
-          if (!previewGeneral[di][sl].includes(eid)) {
-            previewGeneral[di][sl].push(eid);
-          }
-          totalParsed++;
-        } else if (cn === '高新门诊') {
-          if (!previewGaoxin.find(a => a.dayIdx === di && a.doctorId === eid)) {
-            previewGaoxin.push({ dayIdx: di, doctorId: eid });
+        for (var si3 = 0; si3 < applySlots.length; si3++) {
+          var curSlot3 = applySlots[si3];
+          if (cn === '总院门诊') {
+            if (!previewGeneral[di]) previewGeneral[di] = { am: [], pm: [] };
+            if (!previewGeneral[di][curSlot3].includes(eid)) {
+              previewGeneral[di][curSlot3].push(eid);
+            }
             totalParsed++;
-          }
-        } else if (cn === '梓潼门诊') {
-          if (!previewZitong.find(a => a.dayIdx === di && a.doctorId === eid)) {
-            previewZitong.push({ dayIdx: di, doctorId: eid });
-            totalParsed++;
+          } else if (cn === '高新门诊') {
+            if (!previewGaoxin.find(a => a.dayIdx === di && a.doctorId === eid)) {
+              previewGaoxin.push({ dayIdx: di, doctorId: eid });
+              totalParsed++;
+            }
+          } else if (cn === '梓潼门诊') {
+            if (!previewZitong.find(a => a.dayIdx === di && a.doctorId === eid)) {
+              previewZitong.push({ dayIdx: di, doctorId: eid });
+              totalParsed++;
+            }
           }
         }
       }
@@ -1212,6 +1652,14 @@
       };
       prevWeekOutpatientLoaded = true;
 
+      console.log('[排班辅助] 📥 上周门诊解析完成: 总记录=' + scheds.length +
+        ' 过滤(缺员工=' + skippedPrevNoEid + ' 缺班型=' + skippedPrevNoCn +
+        ' 缺日期=' + skippedPrevNoDate + ' 无此医生=' + skippedPrevNoDoc + ') 门诊=' + totalParsed + '条');
+      console.log('[排班辅助] 📊 上周班型分布:', JSON.stringify(prevCnSamples));
+      console.log('[排班辅助] 📊 门诊明细: 总院',
+        Object.values(previewGeneral).reduce((s, d) => s + (d.am||[]).length + (d.pm||[]).length, 0),
+        '条, 高新', previewGaoxin.length, '条, 梓潼', previewZitong.length, '条, 冲突', conflicts.length, '个');
+
       if (totalParsed === 0) {
         showToast('上周无门诊数据可导入', 'warn');
       } else {
@@ -1232,7 +1680,12 @@
   function applyPrevWeekOutpatient() {
     if (!prevWeekOutpatientPreview) { showToast('请先导入上周门诊数据', 'warn'); return; }
     const preview = prevWeekOutpatientPreview;
-    let appliedGeneral = 0, appliedGaoxin = 0, appliedZitong = 0, skippedConflict = 0;
+    let appliedGeneral = 0, appliedGaoxin = 0, appliedZitong = 0, skippedConflict = 0, skippedOccupied = 0, skippedEmpty = 0;
+
+    console.log('[排班辅助] 📋 开始应用上周门诊预览...');
+    console.log('[排班辅助]   预览数据: 总院门诊',
+      Object.values(preview.outpatientGeneral).reduce((s, d) => s + (d.am||[]).length + (d.pm||[]).length, 0),
+      '条, 高新门诊', preview.outpatientGaoxin.length, '条, 梓潼门诊', preview.outpatientZitong.length, '条');
 
     // 找出冲突的时段集合
     const conflictSet = new Set();
@@ -1249,24 +1702,25 @@
           continue;
         }
         const arr = (preview.outpatientGeneral[d] && preview.outpatientGeneral[d][sl]) ? preview.outpatientGeneral[d][sl] : [];
-        if (arr.length === 0) continue;
-        // 取第一个作为总院门诊，其余的如果有则跳过（冲突已在前面处理）
+        if (arr.length === 0) { skippedEmpty++; continue; }
+        // 取第一个作为总院门诊，第 2 个及以后 → 简易门诊
         const eid = arr[0];
         if (!state.outpatientGeneral[d]) state.outpatientGeneral[d] = { am: null, pm: null };
         if (!state.outpatientGeneral[d][sl]) {
           state.outpatientGeneral[d][sl] = eid;
           appliedGeneral++;
+          console.log('[排班辅助]   ✅ 应用总院门诊:', A.DAYS[d], A.SLOT_LABELS[sl], '→', (getDoctor(eid)||{}).name || eid);
+        } else {
+          skippedOccupied++;
+          console.log('[排班辅助]   ⏭️ 跳过(已占用):', A.DAYS[d], A.SLOT_LABELS[sl], '已有:', (getDoctor(state.outpatientGeneral[d][sl])||{}).name || state.outpatientGeneral[d][sl]);
         }
-        // 如果该时段有多个，第2个设为简易门诊候选（提醒用户）
-        if (arr.length >= 2) {
-          const eid2 = arr[1];
-          // 检查是否已经存在简易门诊
-          const existsSimple = (state.outpatientSimple || []).some(
-            a => a.dayIdx === d && a.slot === sl && a.doctorId === eid2
-          );
-          if (!existsSimple) {
+        // 第 2 个及以后 → 简易门诊
+        for (var ai = 1; ai < arr.length; ai++) {
+          var eidN = arr[ai];
+          if (!(state.outpatientSimple || []).some(function (a) { return a.dayIdx === d && a.slot === sl && a.doctorId === eidN; })) {
             if (!state.outpatientSimple) state.outpatientSimple = [];
-            state.outpatientSimple.push({ dayIdx: d, slot: sl, doctorId: eid2 });
+            state.outpatientSimple.push({ dayIdx: d, slot: sl, doctorId: eidN });
+            console.log('[排班辅助]   📝 第' + (ai + 1) + '位→简易门诊:', (getDoctor(eidN)||{}).name || eidN);
           }
         }
       }
@@ -1281,6 +1735,9 @@
         if (!state.outpatientGaoxin) state.outpatientGaoxin = [];
         state.outpatientGaoxin.push({ dayIdx: ga.dayIdx, doctorId: ga.doctorId });
         appliedGaoxin++;
+        console.log('[排班辅助]   ✅ 应用高新门诊:', A.DAYS[ga.dayIdx], '→', (getDoctor(ga.doctorId)||{}).name || ga.doctorId);
+      } else {
+        console.log('[排班辅助]   ⏭️ 跳过高新(已存在):', A.DAYS[ga.dayIdx], (getDoctor(ga.doctorId)||{}).name || ga.doctorId);
       }
     }
 
@@ -1293,18 +1750,29 @@
         if (!state.outpatientZitong) state.outpatientZitong = [];
         state.outpatientZitong.push({ dayIdx: zt.dayIdx, doctorId: zt.doctorId });
         appliedZitong++;
+        console.log('[排班辅助]   ✅ 应用梓潼门诊:', A.DAYS[zt.dayIdx], '→', (getDoctor(zt.doctorId)||{}).name || zt.doctorId);
+      } else {
+        console.log('[排班辅助]   ⏭️ 跳过梓潼(已存在):', A.DAYS[zt.dayIdx], (getDoctor(zt.doctorId)||{}).name || zt.doctorId);
       }
     }
 
     syncStateToBackground();
     renderPanel();
 
+    console.log('[排班辅助] 📊 应用结果: 总院×' + appliedGeneral + ' 高新×' + appliedGaoxin + ' 梓潼×' + appliedZitong +
+      ' | 跳过: 冲突×' + skippedConflict + ' 已占用×' + skippedOccupied + ' 空×' + skippedEmpty);
+
     let msg = `已应用：总院门诊×${appliedGeneral} 高新门诊×${appliedGaoxin} 梓潼门诊×${appliedZitong}`;
     if (skippedConflict > 0) msg += `\n⚠️ ${skippedConflict} 个冲突时段已跳过，请手动处理`;
+    if (skippedOccupied > 0) msg += `\n⏭️ ${skippedOccupied} 个时段已有安排，未覆盖`;
     if (preview.conflicts.length > 0) {
       msg += '\n💡 多个总院门诊的时段已自动将第2位设为简易门诊，请检查确认。';
     }
-    showToast(msg, preview.conflicts.length > 0 ? 'warn' : 'success');
+    if (appliedGeneral === 0 && appliedGaoxin === 0 && appliedZitong === 0) {
+      msg += '\n⚠️ 未应用任何门诊数据，请检查控制台日志排查原因。';
+    }
+    showToast(msg, (appliedGeneral + appliedGaoxin + appliedZitong) === 0 ? 'warn' :
+      (preview.conflicts.length > 0 ? 'warn' : 'success'));
   }
 
   /** 清除上周门诊预览 */
@@ -1313,6 +1781,197 @@
     prevWeekOutpatientLoaded = false;
     renderPanel();
     showToast('已清除上周门诊预览', 'info');
+  }
+
+  // ==================== 上周值班顺序导入 ====================
+
+  /**
+   * 拉取上周值班数据，重建值班顺序列表
+   *
+   * 值班周期 8 个位置对应的值班日：
+   *   [0] 上周日 → [1]周一 → [2]周二 → [3]周三 → [4]周四 → [5]周五 → [6]周六 → [7]周日
+   *
+   * 匹配规则：
+   *   1. 查找当天有「值班」班型的医生（am 或 pm 均可）
+   *   2. 若当天多人值班，取第一个
+   *   3. 若该医生当天同时有门诊（总院/高新/梓潼），跳过（门诊 > 值班）
+   *   4. 位置[0]的「上周日」需要额外拉取上上周日的数据
+   */
+  async function fetchAndPreviewPrevWeekDuty() {
+    if (!state.doctors.length) { showToast('请先确保人员数据已加载', 'warn'); return; }
+
+    // 上周一 ~ 上周日
+    const lastMonday = new Date(weekInfo.monday);
+    lastMonday.setDate(lastMonday.getDate() - 7);
+    const lms = lastMonday.toISOString().slice(0, 10);
+    const lme = getSunday(lms);
+
+    // 上上周日（位置[0]需要）
+    const prevSunday = new Date(lastMonday);
+    prevSunday.setDate(prevSunday.getDate() - 1);
+    const pss = prevSunday.toISOString().slice(0, 10);
+
+    showToast('正在加载上周值班数据...', 'info');
+    console.log('[排班辅助] 拉取上周值班: 主区间', lms, '~', lme, ' 上上周日', pss);
+
+    try {
+      const eids = state.doctors.map(d => d.id);
+
+      // 并行拉取两段数据
+      const [srMain, srPrevSun] = await Promise.all([
+        ScheduleAPI.fetchEmpSchedules({ empIds: eids, from: lms, to: lme }),
+        ScheduleAPI.fetchEmpSchedules({ empIds: eids, from: pss, to: pss })
+      ]);
+
+      const parseList = (raw) => {
+        if (!raw || raw.error || !raw.data) return [];
+        return Array.isArray(raw.data) ? raw.data : (raw.data.employees || raw.data.data || raw.data.rows || raw.data.list || []);
+      };
+
+      const mainScheds = parseList(srMain);
+      const prevSunScheds = parseList(srPrevSun);
+      const allScheds = [...mainScheds, ...prevSunScheds];
+
+      console.log('[排班辅助] 上周值班原始数据:', mainScheds.length, '+', prevSunScheds.length, '条');
+
+      // 构建日期 → 值班医生查找函数
+      const findDutyDoctor = (targetDate) => {
+        const candidates = [];
+        for (let r of allScheds) {
+          const eid = String(r.empId || r.employeeId || '');
+          const wd = (r.workDate || r.date || '').slice(0, 10);
+          if (wd !== targetDate || !eid) continue;
+          // 注意：r.id 是排班记录ID，不是班型ID，不能用于 classIdMap 查找
+          const cn = classIdMap[String(r.classId || r.scheduleClassId || '')] || r.name || r.className || '';
+          // 宽松匹配：只要班型名包含"值班"即认为是值班记录（兼容"值班(大夜)"等变体）
+          if (!cn || cn.indexOf('值班') === -1) continue;
+
+          // 检查该医生是否在当前周名单中
+          const doc = getDoctor(eid);
+          if (!doc) continue;
+
+          // 门诊 > 值班：检查该医生在【目标日期所在周】是否有门诊
+          // 目标日期可能跨两个区间（上上周日 + 上周一~日），分别用对应周一做 dayIndex
+          const refMonday = targetDate < lms ? pss : lms;
+          const di = getDayIndexFromMonday(targetDate, refMonday);
+          if (di >= 0 && di < 7) {
+            // 注意：这里检查的是 state 中已加载的【门诊数据】，但 state 存的是本周的。
+            // 对于上周的日期，门诊数据可能不匹配，所以仅做宽松排除：
+            // 只有当该医生在【本周同日】有门诊时才跳过（门诊通常是跨周固定的）
+            const genDay = state.outpatientGeneral[di] || { am: null, pm: null };
+            const hasGaoxin = (state.outpatientGaoxin || []).some(a => a.dayIdx === di && a.doctorId === eid);
+            const hasZitong = (state.outpatientZitong || []).some(a => a.dayIdx === di && a.doctorId === eid);
+            const hasSimple = (state.outpatientSimple || []).some(a => a.dayIdx === di && a.doctorId === eid);
+            const hasAnyOutpatient = (genDay.am === eid || genDay.pm === eid || hasGaoxin || hasZitong || hasSimple);
+            if (hasAnyOutpatient) {
+              console.log('[排班辅助]   ⏭️ 跳过' + eid + '(' + doc.name + ') — 同日有门诊');
+              continue;
+            }
+          }
+
+          candidates.push({ doctorId: eid, name: doc.name });
+        }
+        // 去重（同一医生同一天可能有 am+pm 两条值班记录）
+        const seen = new Set();
+        const unique = [];
+        for (let c of candidates) {
+          if (!seen.has(c.doctorId)) { seen.add(c.doctorId); unique.push(c); }
+        }
+        console.log('[排班辅助]   🔍 日期' + targetDate + ' 值班候选人:', unique.length, '人',
+          unique.map(function(c) { return c.name; }).join(', '));
+        return unique.length > 0 ? unique[0] : null;
+      };
+
+      // 辅助：计算日期相对某周一的 dayIndex
+      function getDayIndexFromMonday(dateStr, mondayStr) {
+        const d = new Date(dateStr);
+        const m = new Date(mondayStr);
+        const diff = Math.round((d - m) / 86400000);
+        return diff >= 0 && diff < 7 ? diff : -1;
+      }
+
+      // 8 天的日期数组
+      const dutyDates = [];
+      // [0] 上上周日 = pss
+      dutyDates.push({ idx: 0, date: pss, label: '上周日(' + pss + ')' });
+      // [1]~[7] 上周一 ~ 上周日
+      for (let d = 0; d < 7; d++) {
+        const dt = new Date(lastMonday);
+        dt.setDate(lastMonday.getDate() + d);
+        const ds = dt.toISOString().slice(0, 10);
+        dutyDates.push({ idx: d + 1, date: ds, label: A.DAYS[d] + '(' + ds + ')' });
+      }
+
+      // 为每个位置匹配值班医生
+      const order = new Array(8).fill('');
+      const details = [];
+      const missingDays = [];
+
+      for (let dd of dutyDates) {
+        const found = findDutyDoctor(dd.date);
+        if (found) {
+          order[dd.idx] = found.doctorId;
+          details.push({ idx: dd.idx, dayLabel: dd.label, doctorId: found.doctorId, doctorName: found.name });
+        } else {
+          details.push({ idx: dd.idx, dayLabel: dd.label, doctorId: '', doctorName: '—' });
+          missingDays.push(dd.label);
+        }
+      }
+
+      prevWeekDutyOrderPreview = {
+        sourceMonday: lms,
+        order: order,
+        details: details,
+        missingDays: missingDays,
+        foundCount: order.filter(id => id).length
+      };
+
+      console.log('[排班辅助] 值班顺序重建结果:', prevWeekDutyOrderPreview.foundCount, '/8, 缺失:', missingDays.join(', ') || '无');
+
+      if (prevWeekDutyOrderPreview.foundCount === 0) {
+        showToast('上周无值班数据可导入', 'warn');
+      } else {
+        const msg = `已重建 ${prevWeekDutyOrderPreview.foundCount}/8 位值班顺序` +
+          (missingDays.length ? `，⚠️ ${missingDays.length} 天未匹配到值班医生` : '');
+        showToast(msg, missingDays.length ? 'warn' : 'success');
+      }
+      renderPanel();
+    } catch (err) {
+      console.error('[排班辅助] 拉取上周值班失败:', err.message);
+      showToast('拉取失败: ' + err.message, 'error');
+    }
+  }
+
+  /** 将预览的上周值班顺序应用到当前 state.dutyOrder */
+  function applyPrevWeekDutyOrder() {
+    if (!prevWeekDutyOrderPreview) { showToast('请先导入上周值班顺序', 'warn'); return; }
+    const preview = prevWeekDutyOrderPreview;
+
+    if (!state.dutyOrder) state.dutyOrder = [];
+    while (state.dutyOrder.length < 8) state.dutyOrder.push('');
+
+    // 仅应用有值的槽位，保留其他为默认或留空
+    let applied = 0;
+    for (let i = 0; i < 8; i++) {
+      if (preview.order[i]) {
+        state.dutyOrder[i] = preview.order[i];
+        applied++;
+      }
+    }
+
+    syncStateToBackground();
+    renderPanel();
+
+    const msg = `已应用 ${applied}/8 位值班顺序` +
+      (preview.missingDays.length ? `，${preview.missingDays.length} 天需手动补充` : '');
+    showToast(msg, preview.missingDays.length ? 'warn' : 'success');
+  }
+
+  /** 清除上周值班预览 */
+  function clearPrevWeekDutyPreview() {
+    prevWeekDutyOrderPreview = null;
+    renderPanel();
+    showToast('已清除上周值班顺序预览', 'info');
   }
 
   // ==================== 业务操作函数 ====================
@@ -1324,15 +1983,15 @@
     syncStateToBackground();
     renderPanel();
   }
-  function updateGeneral(di, sl, did) { if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null }; state.outpatientGeneral[di][sl] = did || null; syncStateToBackground(); }
+  function updateGeneral(di, sl, did) { if (!state.outpatientGeneral[di]) state.outpatientGeneral[di] = { am: null, pm: null }; state.outpatientGeneral[di][sl] = did || null; syncStateToBackground(); applyToPageTable(); }
   function addGaoxin() { if (!state.outpatientGaoxin) state.outpatientGaoxin = []; state.outpatientGaoxin.push({ dayIdx: null, doctorId: null }); renderPanel(); }
-  function updateGaoxin(i, f, v) { if (!state.outpatientGaoxin) state.outpatientGaoxin = []; if (!state.outpatientGaoxin[i]) state.outpatientGaoxin[i] = { dayIdx: null, doctorId: null }; state.outpatientGaoxin[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); }
+  function updateGaoxin(i, f, v) { if (!state.outpatientGaoxin) state.outpatientGaoxin = []; if (!state.outpatientGaoxin[i]) state.outpatientGaoxin[i] = { dayIdx: null, doctorId: null }; state.outpatientGaoxin[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); applyToPageTable(); }
   function removeGaoxin(i) { state.outpatientGaoxin.splice(i, 1); renderPanel(); }
   function addZitong() { if (!state.outpatientZitong) state.outpatientZitong = []; state.outpatientZitong.push({ dayIdx: null, doctorId: null }); renderPanel(); }
-  function updateZitong(i, f, v) { if (!state.outpatientZitong) state.outpatientZitong = []; if (!state.outpatientZitong[i]) state.outpatientZitong[i] = { dayIdx: null, doctorId: null }; state.outpatientZitong[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); }
+  function updateZitong(i, f, v) { if (!state.outpatientZitong) state.outpatientZitong = []; if (!state.outpatientZitong[i]) state.outpatientZitong[i] = { dayIdx: null, doctorId: null }; state.outpatientZitong[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); applyToPageTable(); }
   function removeZitong(i) { state.outpatientZitong.splice(i, 1); renderPanel(); }
   function addSimple() { if (!state.outpatientSimple) state.outpatientSimple = []; state.outpatientSimple.push({ dayIdx: null, doctorId: null, slot: null }); renderPanel(); }
-  function updateSimple(i, f, v) { if (!state.outpatientSimple) state.outpatientSimple = []; if (!state.outpatientSimple[i]) state.outpatientSimple[i] = { dayIdx: null, doctorId: null, slot: null }; state.outpatientSimple[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); }
+  function updateSimple(i, f, v) { if (!state.outpatientSimple) state.outpatientSimple = []; if (!state.outpatientSimple[i]) state.outpatientSimple[i] = { dayIdx: null, doctorId: null, slot: null }; state.outpatientSimple[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); applyToPageTable(); }
   function removeSimple(i) { state.outpatientSimple.splice(i, 1); renderPanel(); }
 
   function clearOutpatient() {
@@ -1377,12 +2036,12 @@
     });
     input.click();
   }
-  function updateSpecial(did, di, sl, t) { if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = t || null; syncStateToBackground(); }
+  function updateSpecial(did, di, sl, t) { if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = t || null; syncStateToBackground(); applyToPageTable(); }
   function toggleAllSpecial(on, did) { document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]`).forEach(cb => cb.checked = on); }
   function toggleWorkdaySpecial(did) { document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]`).forEach(cb => { cb.checked = (state.workdayConfig || [])[+cb.dataset.day]; }); }
   function toggleSlotSpecial(did, slot) { document.querySelectorAll(`.sh-special-chk[data-doc="${did}"][data-slot="${slot}"]`).forEach(cb => { cb.checked = true; }); }
-  function batchSpecial(did) { const t = document.getElementById('sh-batch-special-type')?.value; if (!t) { showToast('请选择类型', 'warn'); return; } const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = t; }); renderSpecialDocForm(); syncStateToBackground(); showToast(`已应用 ${t} ×${chk.length}`, 'success'); }
-  function batchClearSpecial(did) { const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = null; }); renderSpecialDocForm(); showToast(`已清除 ×${chk.length}`, 'success'); }
+  function batchSpecial(did) { const t = document.getElementById('sh-batch-special-type')?.value; if (!t) { showToast('请选择类型', 'warn'); return; } const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = t; }); renderSpecialDocForm(); syncStateToBackground(); applyToPageTable(); showToast(`已应用 ${t} ×${chk.length}`, 'success'); }
+  function batchClearSpecial(did) { const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = null; }); renderSpecialDocForm(); syncStateToBackground(); applyToPageTable(); showToast(`已清除 ×${chk.length}`, 'success'); }
   function updateDutyOrder(i, did) { if (!state.dutyOrder) state.dutyOrder = []; while (state.dutyOrder.length < 8) state.dutyOrder.push(''); state.dutyOrder[i] = did || ''; renderPanel(); syncStateToBackground(); }
   function resetDutyOrder() { state.dutyOrder = A.buildDefaultDutyOrder(state.doctors); renderPanel(); }
   function runAutoDuty() { const f = (state.dutyOrder || []).filter(id => id && getDoctor(id)).length; if (!f) { showToast('请先设置值班序列', 'warn'); return; } if (!confirm('执行自动排班？已有安排不会被覆盖。')) return; const r = A.computeAutoDuty(state); state.dutyAssigned = r.dutyAssigned; state.baiban1Flags = r.baiban1Flags; renderPanel(); syncStateToBackground(); const c = state.baiban1Flags.filter(fl => fl.isConflict).length; showToast(c ? `排班完成！${c}个冲突需处理` : '排班完成，无冲突！', c ? 'warn' : 'success'); }

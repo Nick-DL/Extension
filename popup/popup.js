@@ -3,6 +3,7 @@
  */
 
 let currentState = { enabled: false, weekInfo: null };
+let _testModeInitializing = true; // 防止初始化时触发 change 事件
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
@@ -11,6 +12,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     onToggleEnable(this.checked);
   });
   document.getElementById('testModeToggle').addEventListener('change', function () {
+    // 初始化阶段跳过（避免从 storage 恢复时重复触发注册）
+    if (_testModeInitializing) return;
     onToggleTestMode(this.checked);
   });
   document.getElementById('btnRefreshData').addEventListener('click', refreshData);
@@ -29,10 +32,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('[Popup] 获取状态失败:', e);
   }
 
-  // 加载测试模式配置
+  // 加载测试模式配置（先设值再解除初始化标记，避免触发 change）
   chrome.storage.local.get(['testMode', 'testPatterns'], (result) => {
+    _testModeInitializing = true;
     document.getElementById('testModeToggle').checked = result.testMode || false;
     document.getElementById('testUrlInput').value = (result.testPatterns || []).join('\n');
+    _testModeInitializing = false;
   });
 });
 
@@ -84,45 +89,158 @@ function updateUI(state) {
   }
 }
 
+// ==================== 辅助：向当前页面 content script 发消息 ====================
+
+/**
+ * 获取当前标签页，校验是否支持插件
+ * @returns {Promise<{tab: object, isMatch: boolean, isInjected: boolean}>}
+ */
+async function getCurrentTabInfo() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id) return { tab: null, isMatch: false, isInjected: false };
+
+  // 检查 URL 是否匹配 manifest content_scripts 的 match 模式
+  const url = tab.url || '';
+  const isMatch = /10\.66\.66\.151\/app\/attendance\/schedules\/hospital/.test(url) ||
+    /^http:\/\/localhost\//.test(url);
+
+  // 尝试 ping content script 判断是否已注入
+  let isInjected = false;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'PING' });
+    isInjected = true;
+  } catch (e) {
+    // content script 未注入
+  }
+
+  return { tab, isMatch, isInjected };
+}
+
+/**
+ * 向当前标签页注入 content scripts（通过 activeTab 权限动态注入）
+ * @returns {Promise<boolean>} 是否注入成功
+ */
+async function injectContentScripts(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      files: ['lib/algorithm.js', 'lib/api.js', 'content/content.js']
+    });
+    await chrome.scripting.insertCSS({
+      target: { tabId: tabId },
+      files: ['content/floating-panel.css']
+    });
+    console.log('[Popup] ✅ 已动态注入 content scripts 到 tab', tabId);
+    return true;
+  } catch (err) {
+    console.warn('[Popup] ⚠️ 动态注入失败:', err.message);
+    return false;
+  }
+}
+
 // ==================== 事件处理 ====================
+
 async function onToggleEnable(enabled) {
   try {
+    const { tab, isMatch, isInjected } = await getCurrentTabInfo();
+
+    // 先更新 background 状态
     await chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled });
     currentState.enabled = enabled;
     updateUI(currentState);
 
-    // 通知content script
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab) {
-      chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled }).catch(() => {});
+    if (!tab) {
+      showPopupToast('无法获取当前标签页信息', 'error');
+      return;
+    }
+
+    if (enabled) {
+      // === 启用插件 ===
+      if (!isInjected) {
+        // 页面没有 content script → 尝试动态注入
+        if (tab.url && /^(http|https|file):\/\//.test(tab.url)) {
+          showPopupToast('正在为当前页面注入插件...', 'info');
+          const injected = await injectContentScripts(tab.id);
+          if (injected) {
+            // 注入成功后发消息
+            await new Promise(r => setTimeout(r, 200)); // 等脚本初始化
+            chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled }).catch(() => {});
+            showPopupToast('插件已启用！', 'success');
+          } else {
+            // 注入失败 → 引导用户使用测试模式
+            showPopupToast('当前页面不支持直接注入。\n请使用下方「🧪 测试模式」添加页面匹配后刷新。', 'error');
+            // 回退开关
+            document.getElementById('enableToggle').checked = false;
+            currentState.enabled = false;
+            updateUI(currentState);
+            await chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: false });
+            return;
+          }
+        } else {
+          showPopupToast('此页面类型不支持插件（仅支持 http/https/file 页面）', 'error');
+          document.getElementById('enableToggle').checked = false;
+          currentState.enabled = false;
+          updateUI(currentState);
+          await chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: false });
+          return;
+        }
+      } else {
+        // 已有 content script，直接通知
+        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled }).catch(() => {
+          showPopupToast('插件已启用，但页面未响应。请刷新页面后重试。', 'warn');
+        });
+      }
+    } else {
+      // === 禁用插件 ===
+      if (isInjected) {
+        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled }).catch(() => {});
+      }
+      showPopupToast('插件已关闭', 'info');
     }
   } catch (e) {
     console.error('[Popup] 切换启用状态失败:', e);
+    showPopupToast('操作失败: ' + e.message, 'error');
   }
 }
 
-function openFloatingPanel() {
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (tab) {
-      chrome.tabs.sendMessage(tab.id, { type: 'OPEN_PANEL' }).catch(() => {});
-    }
+async function openFloatingPanel() {
+  const { tab, isInjected } = await getCurrentTabInfo();
+  if (!tab) return;
+  if (!isInjected) {
+    showPopupToast('请先在页面中启用插件开关', 'warn');
+    return;
+  }
+  chrome.tabs.sendMessage(tab.id, { type: 'OPEN_PANEL' }).catch(() => {
+    showPopupToast('插件未响应，请刷新页面后重试', 'warn');
   });
 }
 
-function refreshData() {
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (tab) {
-      chrome.tabs.sendMessage(tab.id, { type: 'REFRESH_DATA' }).catch(() => {});
-    }
+async function refreshData() {
+  const { tab, isInjected } = await getCurrentTabInfo();
+  if (!tab) return;
+  if (!isInjected) {
+    showPopupToast('请先在页面中启用插件开关', 'warn');
+    return;
+  }
+  chrome.tabs.sendMessage(tab.id, { type: 'REFRESH_DATA' }).catch(() => {
+    showPopupToast('插件未响应，请刷新页面后重试', 'warn');
   });
 }
 
 function restoreData() {
   if (!confirm('确定要恢复原始备份数据？当前所有修改将丢失。')) return;
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (tab) {
-      chrome.tabs.sendMessage(tab.id, { type: 'RESTORE_DATA' }).catch(() => {});
+  chrome.tabs.query({ active: true, currentWindow: true }, async ([tab]) => {
+    if (!tab) return;
+    // 先检查是否已注入
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: 'PING' });
+    } catch (e) {
+      showPopupToast('请先在页面中启用插件开关', 'warn');
+      return;
     }
+    chrome.tabs.sendMessage(tab.id, { type: 'RESTORE_DATA' }).catch(() => {
+      showPopupToast('插件未响应，请刷新页面后重试', 'warn');
+    });
   });
 }
 
@@ -133,11 +251,23 @@ function onToggleTestMode(enabled) {
     chrome.storage.local.get(['testPatterns'], (result) => {
       const patterns = result.testPatterns || [];
       if (patterns.length > 0) {
-        chrome.runtime.sendMessage({ type: 'REGISTER_TEST_SCRIPTS', patterns });
+        chrome.runtime.sendMessage({ type: 'REGISTER_TEST_SCRIPTS', patterns }, (resp) => {
+          if (resp && resp.success) {
+            showPopupToast('测试模式已启用，刷新目标页面生效', 'success');
+          } else {
+            showPopupToast('测试模式注册失败: ' + (resp?.error || '未知错误'), 'error');
+          }
+        });
+      } else {
+        showPopupToast('测试模式已启用，但未设置匹配模式。请在下方添加。', 'warn');
       }
     });
   } else {
-    chrome.runtime.sendMessage({ type: 'UNREGISTER_TEST_SCRIPTS' });
+    chrome.runtime.sendMessage({ type: 'UNREGISTER_TEST_SCRIPTS' }, (resp) => {
+      if (resp && resp.success) {
+        showPopupToast('测试模式已关闭', 'info');
+      }
+    });
   }
 }
 
