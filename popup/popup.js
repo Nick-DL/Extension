@@ -7,6 +7,11 @@ let _testModeInitializing = true; // 防止初始化时触发 change 事件
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
+  // 动态显示实际版本号
+  const manifest = chrome.runtime.getManifest();
+  const verEl = document.getElementById('footerVersion');
+  if (verEl) verEl.textContent = 'v' + manifest.version;
+
   // ---- 绑定事件监听器（替代内联onclick/onchange，避免CSP违规） ----
   document.getElementById('enableToggle').addEventListener('change', function () {
     onToggleEnable(this.checked);
@@ -168,7 +173,7 @@ async function onToggleEnable(enabled) {
             showPopupToast('插件已启用！', 'success');
           } else {
             // 注入失败 → 引导用户使用测试模式
-            showPopupToast('当前页面不支持直接注入。\n请使用下方「🧪 测试模式」添加页面匹配后刷新。', 'error');
+            showPopupToast('当前页面不支持直接注入。\n请使用下方「测试模式」添加页面匹配后刷新。', 'error');
             // 回退开关
             document.getElementById('enableToggle').checked = false;
             currentState.enabled = false;

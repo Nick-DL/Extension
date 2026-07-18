@@ -34,6 +34,24 @@
   border-radius: 50%;
   min-height: unset;
 }
+/* 最小化时：隐藏标题文字和操作按钮，图标居中无间隙 */
+#scheduling-helper-panel.minimized .sh-title {
+  font-size: 0;
+  gap: 0;
+}
+#scheduling-helper-panel.minimized .sh-title .material-icons {
+  font-size: 24px;
+}
+#scheduling-helper-panel.minimized .sh-actions {
+  display: none;
+}
+/* 最小化时：标题栏填满整个圆 */
+#scheduling-helper-panel.minimized .sh-panel-header {
+  border-radius: 50%;
+  justify-content: center;
+  padding: 0;
+  height: 100%;
+}
 
 /* ========== 标题栏（可拖拽） ========== */
 .sh-panel-header {
@@ -41,7 +59,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: #1677ff;
+  background: #006A69;
   color: #fff;
   cursor: move;
   flex-shrink: 0;
@@ -74,6 +92,9 @@
 }
 .sh-panel-header .sh-btn:hover {
   background: rgba(255,255,255,0.35);
+}
+#sh-btn-minimize {
+  padding-top: 3px;
 }
 
 /* ========== 步骤条 ========== */
@@ -113,13 +134,13 @@
   color: #999;
 }
 .sh-step-item.active {
-  color: #1677ff;
-  border-bottom-color: #1677ff;
+  color: #006A69;
+  border-bottom-color: #006A69;
 }
 .sh-step-item.active .sh-step-num {
-  background: #1677ff;
+  background: #006A69;
   color: #fff;
-  border-color: #1677ff;
+  border-color: #006A69;
 }
 .sh-step-item.done {
   color: #52c41a;
@@ -157,8 +178,8 @@
 }
 .sh-panel-body select:focus,
 .sh-panel-body input:focus {
-  border-color: #1677ff;
-  box-shadow: 0 0 0 2px rgba(22,119,255,0.15);
+  border-color: #006A69;
+  box-shadow: 0 0 0 2px rgba(0,106,105,0.15);
 }
 
 /* 子标题 */
@@ -199,14 +220,14 @@
   align-items: center;
   gap: 3px;
 }
-.sh-btn-primary { background: #1677ff; color: #fff; }
-.sh-btn-primary:hover { background: #4096ff; }
+.sh-btn-primary { background: #006A69; color: #fff; }
+.sh-btn-primary:hover { background: #00857D; }
 .sh-btn-danger { background: #ff4d4f; color: #fff; }
 .sh-btn-danger:hover { background: #ff7875; }
 .sh-btn-success { background: #52c41a; color: #fff; }
 .sh-btn-success:hover { background: #73d13d; }
-.sh-btn-outline { background: #fff; color: #1677ff; border: 1px solid #1677ff; }
-.sh-btn-outline:hover { background: #e6f4ff; }
+.sh-btn-outline { background: #fff; color: #006A69; border: 1px solid #006A69; }
+.sh-btn-outline:hover { background: #E0F2F1; }
 .sh-btn-sm { padding: 3px 8px; font-size: 11px; }
 .sh-btn-xs { padding: 2px 6px; font-size: 10px; border-radius: 3px; }
 .sh-btn-block { width: 100%; justify-content: center; }
@@ -220,7 +241,7 @@
   font-size: 11px;
   line-height: 1.5;
 }
-.sh-info-bar.info { background: #e6f4ff; color: #0958d9; border: 1px solid #91caff; }
+.sh-info-bar.info { background: #E0F2F1; color: #004D4C; border: 1px solid #80CBC4; }
 .sh-info-bar.warn { background: #fffbe6; color: #ad6800; border: 1px solid #ffe58f; }
 .sh-info-bar.error { background: #fff2f0; color: #cf1322; border: 1px solid #ffccc7; }
 .sh-info-bar.success { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
@@ -250,7 +271,7 @@
   margin-left: 4px;
 }
 .sh-doc-tag.director { background: #fff0f0; color: #cf1322; }
-.sh-doc-tag.regular { background: #e6f4ff; color: #0958d9; }
+.sh-doc-tag.regular { background: #E0F2F1; color: #004D4C; }
 .sh-doc-tag.trainee { background: #f0fff0; color: #237804; }
 .sh-doc-tag.noDuty { background: #fffbe6; color: #ad6800; }
 .sh-doc-tag.training { background: #f6ffed; color: #389e0d; }
@@ -290,14 +311,14 @@
 
 /* 拖拽动画：插入上方（目标行上边框渐变） */
 .sh-duty-row.drag-insert-above {
-  border-top: 3px solid #1677ff !important;
-  box-shadow: 0 -4px 8px rgba(22, 119, 255, 0.3);
+  border-top: 3px solid #006A69 !important;
+  box-shadow: 0 -4px 8px rgba(0, 106, 105, 0.3);
 }
 
 /* 拖拽动画：插入下方（目标行下边框渐变） */
 .sh-duty-row.drag-insert-below {
-  border-bottom: 3px solid #1677ff !important;
-  box-shadow: 0 4px 8px rgba(22, 119, 255, 0.3);
+  border-bottom: 3px solid #006A69 !important;
+  box-shadow: 0 4px 8px rgba(0, 106, 105, 0.3);
 }
 
 /* ========== 冲突列表 ========== */
@@ -354,7 +375,7 @@
   z-index: 99998;
   width: 36px;
   height: 72px;
-  background: #1677ff;
+  background: #006A69;
   color: #fff;
   border-radius: 8px 0 0 8px;
   cursor: pointer;
@@ -372,7 +393,7 @@
 #sh-quick-entry:hover {
   opacity: 1;
   width: 40px;
-  background: #4096ff;
+  background: #00857D;
 }
 #sh-quick-entry.hidden {
   display: none;
@@ -436,8 +457,8 @@
   outline: none;
 }
 .sh-week-picker input[type="number"]:focus {
-  border-color: #1677ff;
-  box-shadow: 0 0 0 2px rgba(22,119,255,0.15);
+  border-color: #006A69;
+  box-shadow: 0 0 0 2px rgba(0,106,105,0.15);
 }
 
 /* ========== 滚动条美化 ========== */

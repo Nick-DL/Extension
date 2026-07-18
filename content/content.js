@@ -182,8 +182,13 @@
     const week1Mon = new Date(jan4);
     week1Mon.setDate(jan4.getDate() - (jan4Dow - 1));
     // 4. 周数 = 相差天数 / 7 + 1
-    const diffDays = Math.round((mon - week1Mon) / 86400000);
+    const diffMs = mon - week1Mon;
+    const diffDays = Math.round(diffMs / 86400000);
     const wn = Math.floor(diffDays / 7) + 1;
+    console.log('[排班辅助][getWeekInfo] 输入:', date, '→ mon:', mon.toISOString().slice(0,10),
+      'thu:', thu.toISOString().slice(0,10), 'isoYear:', isoYear,
+      'week1Mon:', week1Mon.toISOString().slice(0,10),
+      'diffMs:', diffMs, 'diffDays:', diffDays, 'wn:', wn);
     return { year: isoYear, week: wn, monday: mon.toISOString().slice(0, 10) };
   }
   function getSunday(ms) { const d = new Date(ms); d.setDate(d.getDate() + 6); return d.toISOString().slice(0, 10); }
@@ -836,8 +841,15 @@
   }
   function injectPanel() {
     if (document.getElementById('scheduling-helper-panel')) return;
+    // 注入 Material Icons 样式（本地字体文件）
+    if (!document.getElementById('__sh-material-icons')) {
+      const style = document.createElement('style');
+      style.id = '__sh-material-icons';
+      style.textContent = `@font-face{font-family:'Material Icons';font-style:normal;font-weight:400;src:url(${chrome.runtime.getURL('icons/MaterialIcons-Regular.woff2')}) format('woff2');}.material-icons{font-family:'Material Icons';font-weight:400;font-style:normal;display:inline-block;line-height:1;text-transform:none;letter-spacing:normal;word-wrap:normal;white-space:nowrap;direction:ltr;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;-moz-osx-font-smoothing:grayscale;font-feature-settings:'liga';}`;
+      document.head.appendChild(style);
+    }
     const p = document.createElement('div'); p.id = 'scheduling-helper-panel';
-    p.innerHTML = `<div class="sh-panel-header" id="sh-panel-header"><span class="sh-title">🏥 排班辅助</span><div class="sh-actions"><button class="sh-btn" id="sh-btn-minimize" title="最小化">−</button><button class="sh-btn" id="sh-btn-close" title="关闭">✕</button></div></div><div class="sh-steps-bar" id="sh-steps-bar"><div class="sh-step-item active" data-action="goToStep" data-step="1"><span class="sh-step-num">1</span>人员</div><div class="sh-step-item" data-action="goToStep" data-step="2"><span class="sh-step-num">2</span>门诊</div><div class="sh-step-item" data-action="goToStep" data-step="3"><span class="sh-step-num">3</span>特殊</div><div class="sh-step-item" data-action="goToStep" data-step="4"><span class="sh-step-num">4</span>值班</div><div class="sh-step-item" data-action="goToStep" data-step="5"><span class="sh-step-num">5</span>确认</div></div><div class="sh-panel-body" id="sh-panel-body"></div>`;
+    p.innerHTML = `<div class="sh-panel-header" id="sh-panel-header"><span class="sh-title"><span class="material-icons">local_hospital</span> 排班辅助</span><div class="sh-actions"><button class="sh-btn" id="sh-btn-minimize" title="最小化">−</button><button class="sh-btn" id="sh-btn-close" title="关闭">✕</button></div></div><div class="sh-steps-bar" id="sh-steps-bar"><div class="sh-step-item active" data-action="goToStep" data-step="1"><span class="sh-step-num">1</span>人员</div><div class="sh-step-item" data-action="goToStep" data-step="2"><span class="sh-step-num">2</span>门诊</div><div class="sh-step-item" data-action="goToStep" data-step="3"><span class="sh-step-num">3</span>特殊</div><div class="sh-step-item" data-action="goToStep" data-step="4"><span class="sh-step-num">4</span>值班</div><div class="sh-step-item" data-action="goToStep" data-step="5"><span class="sh-step-num">5</span>确认</div></div><div class="sh-panel-body" id="sh-panel-body"></div>`;
     document.body.appendChild(p);
     makeDraggable(p.querySelector('.sh-panel-header'), p);
     document.getElementById('sh-btn-minimize').addEventListener('click', toggleMinimize);
@@ -992,13 +1004,25 @@
 
   // ==================== 拖拽 ====================
   function makeDraggable(handle, target) {
-    let dragging = false, sx, sy, sl, st;
+    let dragging = false, sx, sy, sl, st, moved = false;
     handle.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON') return; dragging = true;
+      if (e.target.tagName === 'BUTTON') return;
+      dragging = true; moved = false;
       sx = e.clientX; sy = e.clientY; const r = target.getBoundingClientRect(); sl = r.left; st = r.top;
       target.style.transition = 'none'; document.body.style.userSelect = 'none';
-      const mm = (ev) => { if (!dragging) return; target.style.left = (sl + ev.clientX - sx) + 'px'; target.style.top = (st + ev.clientY - sy) + 'px'; target.style.right = 'auto'; };
-      const mu = () => { dragging = false; target.style.transition = ''; document.body.style.userSelect = ''; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+      const mm = (ev) => {
+        if (!dragging) return;
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+        if (moved) { target.style.left = (sl + dx) + 'px'; target.style.top = (st + dy) + 'px'; target.style.right = 'auto'; }
+      };
+      const mu = () => {
+        dragging = false;
+        target.style.transition = ''; document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu);
+        // 最小化状态下，未拖动 = 单击 → 恢复窗口
+        if (!moved && isMinimized) toggleMinimize();
+      };
       document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
     });
   }
@@ -1026,26 +1050,30 @@
     const monParts = weekInfo.monday.split('-');
     const monLabel = `${parseInt(monParts[1])}月${parseInt(monParts[2])}日周一`;
     // ---- 工作周选择器（通过操作页面Ant Design picker DOM） ----
-    h += `<div class="sh-subtitle">📅 工作周切换</div>`;
+    h += `<div class="sh-subtitle"><span class="material-icons">calendar_month</span> 工作周切换</div>`;
     h += `<div class="sh-week-picker" style="justify-content:space-between;">`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="goPrevWeek" title="上一周">◀ 上一周</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="goPrevWeek" title="上一周"><span class="material-icons">chevron_left</span> 上一周</button>`;
     h += `<span style="font-weight:600;font-size:13px;white-space:nowrap;"><span style="font-size:10px;font-weight:400;color:#888;">${weekInfo.year}年 </span>第${weekInfo.week}周 <span style="font-size:10px;font-weight:400;color:#888;">· ${monLabel}</span></span>`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="goNextWeek" title="下一周">下一周 ▶</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="goNextWeek" title="下一周">下一周 <span class="material-icons">chevron_right</span></button>`;
     h += `</div>`;
     h += `<div class="sh-week-picker" style="margin-top:6px;justify-content:space-between;align-items:center;">`;
-    const nextWeek = Math.min(weekInfo.week + 1, 53);
-    const nextMonParts = getMondayOfISOWeek(weekInfo.year, nextWeek).split('-');
+    // 用 getWeekInfo 从下周一反算，避免年底 52/53 周边界问题
+    const currentMonday = new Date(weekInfo.monday);
+    const nextMonday = new Date(currentMonday);
+    nextMonday.setDate(currentMonday.getDate() + 7);
+    const nextWeekInfo = getWeekInfo(nextMonday);
+    const nextMonParts = nextWeekInfo.monday.split('-');
     const nextMonLabel = `${parseInt(nextMonParts[1])}月${parseInt(nextMonParts[2])}日周一`;
-    h += `<span style="font-size:11px;color:#666;">跳转至 <span style="font-weight:600;color:#333;">第${nextWeek}周</span> <span style="font-size:10px;color:#888;">· ${nextMonLabel}</span></span>`;
+    h += `<span style="font-size:11px;color:#666;">跳转至 <span style="font-weight:600;color:#333;">第${nextWeekInfo.week}周</span> <span style="font-size:10px;color:#888;">· ${nextMonLabel}</span></span>`;
     h += `<span style="display:flex;align-items:center;gap:4px;">`;
-    h += `<input type="number" id="sh-week-num" value="${nextWeek}" min="1" max="53" style="width:44px;padding:5px 6px;text-align:center;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;" title="输入周数">`;
+    h += `<input type="number" id="sh-week-num" value="${nextWeekInfo.week}" min="1" max="53" style="width:44px;padding:5px 6px;text-align:center;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;" title="输入周数">`;
     h += `<button class="sh-btn-action sh-btn-primary" data-action="confirmWeek" style="padding:5px 16px;font-size:13px;font-weight:600;">GO</button>`;
     h += `</span>`;
     h += `</div>`;
     // 人员列表
     h += `<div class="sh-divider"></div>`;
-    h += `<div class="sh-info-bar info">💡 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员。</div>`;
-    h += `<div class="sh-subtitle">📋 人员列表 <span style="font-size:10px;color:#999;font-weight:400;">(${docs.length}人)</span></div>`;
+    h += `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员。</div>`;
+    h += `<div class="sh-subtitle"><span class="material-icons">list_alt</span> 人员列表 <span style="font-size:10px;color:#999;font-weight:400;">(${docs.length}人)</span></div>`;
     h += `<ul class="sh-doc-list">`;
     // 预计算导师候选列表（非规培生）
     const mentorCandidates = docs.filter(d => d.type !== 'trainee');
@@ -1072,45 +1100,45 @@
     }
     h += `</ul>`;
     h += `<div class="sh-divider"></div>`;
-    h += `<div class="sh-subtitle">📅 工作日 / 节假日设定</div>`;
-    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#1677ff;">蓝色=工作日</span>，白色=节假日。</div>`;
+    h += `<div class="sh-subtitle"><span class="material-icons">calendar_month</span> 工作日 / 节假日设定</div>`;
+    h += `<div class="sh-help-text">点击按钮切换：<span style="color:#006A69;">青色=工作日</span>，白色=节假日。</div>`;
     h += `<div class="sh-workday-row">`;
     for (let d = 0; d < 7; d++) { const wd = (state.workdayConfig || [])[d]; h += `<button class="sh-btn-action sh-btn-sm ${wd ? 'sh-btn-primary' : 'sh-btn-outline'}" data-action="toggleWorkday" data-day="${d}">${A.DAYS[d]}</button>`; }
     h += `</div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:6px;padding:8px 16px;font-size:13px;">下一步 → 门诊安排</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:6px;padding:8px 16px;font-size:13px;">下一步 <span class="material-icons">arrow_forward</span> 门诊安排</button>`;
     body.innerHTML = h;
   }
 
   // ===== S2: 门诊 =====
   function renderS2(body) {
-    let h = `<div class="sh-info-bar info">💡 四类门诊分别管理。<br>· 总院门诊 每天上、下午<br>· 简易门诊 时间不固定（表格中显示为总院门诊）<br>· 高新门诊 周内上午<br>· 梓潼门诊 周三上午</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 四类门诊分别管理。<br>· 总院门诊 每天上、下午<br>· 简易门诊 时间不固定（表格中显示为总院门诊）<br>· 高新门诊 周内上午<br>· 梓潼门诊 周三上午</div>`;
 
     // ---- 导入上周门诊区域 ----
     h += renderPrevWeekOutpatientSection();
 
     // 总院门诊
-    h += `<div class="sh-subtitle sh-clinic-title-general">🏥 总院门诊</div>`;
+    h += `<div class="sh-subtitle sh-clinic-title-general"><span class="material-icons">local_hospital</span> 总院门诊</div>`;
     for (let d = 0; d < 7; d++) { const gen = state.outpatientGeneral[d] || { am: null, pm: null }; h += `<div style="margin-bottom:4px;font-size:11px;padding:4px 6px;background:#fafafa;border-radius:4px;"><strong>${A.DAYS[d]}</strong><div class="sh-form-row">`;
       for (let s of A.SLOTS) h += `<div style="flex:1;"><span style="font-size:9px;color:#999;">${A.SLOT_LABELS[s]}</span><select data-action="updateGeneral" data-day="${d}" data-slot="${s}" style="font-size:10px;"><option value="">—</option>${docOptsHtmlSelected(gen[s])}</select></div>`; h += `</div></div>`; }
     // 高新门诊
-    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-gaoxin">🏥 高新门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午）</span></div><div id="sh-gaoxin-rows">`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-gaoxin"><span class="material-icons">local_hospital</span> 高新门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午）</span></div><div id="sh-gaoxin-rows">`;
     (state.outpatientGaoxin || []).forEach((it, i) => { h += renderGxRow(i, it); });
-    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addGaoxin">➕ 添加高新门诊</button>`;
+    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addGaoxin"><span class="material-icons">add</span> 添加高新门诊</button>`;
     // 梓潼门诊
-    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-zitong">🏥 梓潼门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午 · 每两周周三）</span></div><div id="sh-zitong-rows">`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-zitong"><span class="material-icons">local_hospital</span> 梓潼门诊 <span style="font-size:10px;color:#999;font-weight:400;">（仅上午 · 每两周周三）</span></div><div id="sh-zitong-rows">`;
     (state.outpatientZitong || []).forEach((it, i) => { h += renderZtRow(i, it); });
-    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addZitong">➕ 添加梓潼门诊</button>`;
+    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addZitong"><span class="material-icons">add</span> 添加梓潼门诊</button>`;
     // 简易门诊
-    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-general">🏥 简易门诊 <span style="font-size:10px;color:#999;font-weight:400;">（表格中显示为总院门诊）</span></div><div id="sh-simple-rows">`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle sh-clinic-title-general"><span class="material-icons">local_hospital</span> 简易门诊 <span style="font-size:10px;color:#999;font-weight:400;">（表格中显示为总院门诊）</span></div><div id="sh-simple-rows">`;
     (state.outpatientSimple || []).forEach((it, i) => { h += renderSmRow(i, it); });
-    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addSimple">➕ 添加简易门诊</button>`;
+    h += `</div><button class="sh-btn-action sh-btn-outline sh-btn-sm sh-btn-block" data-action="addSimple"><span class="material-icons">add</span> 添加简易门诊</button>`;
     // 导出/导入/清空按钮
     h += `<div class="sh-divider"></div><div class="sh-btn-group">`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="exportOutpatient">📤 导出配置</button>`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importOutpatient">📥 导入配置</button>`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearOutpatient">🗑 清空门诊</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="exportOutpatient"><span class="material-icons">file_upload</span> 导出配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importOutpatient"><span class="material-icons">file_download</span> 导入配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearOutpatient"><span class="material-icons">delete</span> 清空门诊</button>`;
     h += `</div>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 → 特殊安排</button></div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 <span class="material-icons">arrow_forward</span> 特殊安排</button></div>`;
     body.innerHTML = h;
   }
   function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0,1,2,3,4].map(d=>`<option value="${d}" ${it.dayIdx===d?'selected':''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId||'')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}">✕</button></div>`; }
@@ -1120,14 +1148,19 @@
   // ===== 上周门诊导入预览渲染 =====
   function renderPrevWeekOutpatientSection() {
     let s = `<div class="sh-divider"></div>`;
-    s += `<div class="sh-subtitle" style="color:#1677ff;">📥 从上周导入门诊</div>`;
+    s += `<div class="sh-subtitle" style="color:#006A69;"><span class="material-icons">file_download</span> 从上周导入门诊</div>`;
 
     if (!prevWeekOutpatientLoaded || !prevWeekOutpatientPreview) {
       const prevMonday = new Date(weekInfo.monday);
+      console.log('[排班辅助][门诊导入] weekInfo:', JSON.stringify(weekInfo));
+      console.log('[排班辅助][门诊导入] prevMonday(减7前):', prevMonday.toISOString());
       prevMonday.setDate(prevMonday.getDate() - 7);
-      const prevLabel = `${prevMonday.getFullYear()}年 第${getWeekInfo(prevMonday).week}周`;
+      console.log('[排班辅助][门诊导入] prevMonday(减7后):', prevMonday.toISOString());
+      const prevWeekInfo = getWeekInfo(prevMonday);
+      console.log('[排班辅助][门诊导入] getWeekInfo结果:', JSON.stringify(prevWeekInfo));
+      const prevLabel = `${prevMonday.getFullYear()}年 第${prevWeekInfo.week}周`;
       s += `<div class="sh-help-text">点击下方按钮，将 <b>${prevLabel}</b> 的门诊安排（总院门诊、高新门诊、梓潼门诊）导入预览。</div>`;
-      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekOutpatient" style="padding:8px 16px;font-size:13px;">📥 导入上一周门诊</button>`;
+      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekOutpatient" style="padding:8px 16px;font-size:13px;"><span class="material-icons">file_download</span> 导入上一周门诊</button>`;
       return s;
     }
 
@@ -1135,18 +1168,18 @@
     const prevLabel = `${new Date(preview.sourceMonday).getFullYear()}年 第${getWeekInfo(new Date(preview.sourceMonday)).week}周`;
 
     // 状态标签
-    s += `<div class="sh-info-bar success" style="margin-bottom:6px;">✅ 已加载 ${prevLabel} 共 <b>${preview.totalCount}</b> 条门诊记录</div>`;
+    s += `<div class="sh-info-bar success" style="margin-bottom:6px;"><span class="material-icons">check_circle</span> 已加载 ${prevLabel} 共 <b>${preview.totalCount}</b> 条门诊记录</div>`;
 
     // 冲突警告
     if (preview.conflicts.length > 0) {
       s += `<div class="sh-info-bar warn" style="margin-bottom:8px;">`;
-      s += `⚠️ 检测到 <b>${preview.conflicts.length}</b> 个时段存在多个总院门诊：`;
+      s += `<span class="material-icons">warning</span> 检测到 <b>${preview.conflicts.length}</b> 个时段存在多个总院门诊：`;
       s += `<ul style="margin:4px 0 0 14px;font-size:10px;">`;
       for (let c of preview.conflicts) {
         s += `<li>${c.message}</li>`;
       }
       s += `</ul>`;
-      s += `💡 应用时自动将第1位设为总院门诊，第2位设为简易门诊。`;
+      s += `<span class="material-icons">tips_and_updates</span> 应用时自动将第1位设为总院门诊，第2位设为简易门诊。`;
       s += `</div>`;
     }
 
@@ -1172,8 +1205,8 @@
 
     // 操作按钮
     s += `<div class="sh-btn-group">`;
-    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekOutpatient" style="flex:2;">✅ 应用到本周</button>`;
-    s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekOutpatient" style="flex:1;">🔄 重新加载</button>`;
+    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekOutpatient" style="flex:2;"><span class="material-icons">check_circle</span> 应用到本周</button>`;
+    s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekOutpatient" style="flex:1;"><span class="material-icons">refresh</span> 重新加载</button>`;
     s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearPrevWeekPreview" style="flex:1;">✕ 清除</button>`;
     s += `</div>`;
 
@@ -1183,23 +1216,28 @@
   // ===== 上周值班顺序导入预览渲染 =====
   function renderPrevWeekDutySection() {
     let s = `<div class="sh-divider"></div>`;
-    s += `<div class="sh-subtitle" style="color:#ff9800;">📥 从上周导入值班顺序</div>`;
+    s += `<div class="sh-subtitle" style="color:#006A69;"><span class="material-icons">file_download</span> 从上周导入值班顺序</div>`;
 
     if (!prevWeekDutyOrderPreview) {
       const prevMonday = new Date(weekInfo.monday);
+      console.log('[排班辅助][值班导入] weekInfo:', JSON.stringify(weekInfo));
+      console.log('[排班辅助][值班导入] prevMonday(减7前):', prevMonday.toISOString());
       prevMonday.setDate(prevMonday.getDate() - 7);
-      const prevLabel = `${prevMonday.getFullYear()}年 第${getWeekInfo(prevMonday).week}周`;
+      console.log('[排班辅助][值班导入] prevMonday(减7后):', prevMonday.toISOString());
+      const prevWeekInfo = getWeekInfo(prevMonday);
+      console.log('[排班辅助][值班导入] getWeekInfo结果:', JSON.stringify(prevWeekInfo));
+      const prevLabel = `${prevMonday.getFullYear()}年 第${prevWeekInfo.week}周`;
       s += `<div class="sh-help-text">根据 <b>${prevLabel}</b> 的排班数据，自动重建值班医生序列。</div>`;
-      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekDuty" style="padding:8px 16px;font-size:13px;">📥 导入上周值班顺序</button>`;
+      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekDuty" style="padding:8px 16px;font-size:13px;"><span class="material-icons">file_download</span> 导入上周值班顺序</button>`;
       return s;
     }
 
     const preview = prevWeekDutyOrderPreview;
 
     // 状态标签
-    s += `<div class="sh-info-bar success" style="margin-bottom:6px;">✅ 已重建 <b>${preview.foundCount}/8</b> 位值班顺序`;
+    s += `<div class="sh-info-bar success" style="margin-bottom:6px;"><span class="material-icons">check_circle</span> 已重建 <b>${preview.foundCount}/8</b> 位值班顺序`;
     if (preview.missingDays.length > 0) {
-      s += ` · ⚠️ 缺失：${preview.missingDays.join('、')}`;
+      s += ` · <span class="material-icons">warning</span> 缺失：${preview.missingDays.join('、')}`;
     }
     s += `</div>`;
 
@@ -1214,15 +1252,15 @@
       s += `<tr style="border-bottom:1px solid #f0f0f0;${hasMatch ? '' : 'background:#fffbe6;'}">`;
       s += `<td style="padding:3px 4px;text-align:center;font-weight:600;">${i}</td>`;
       s += `<td style="padding:3px 4px;${hasMatch ? '' : 'color:#faad14;'}">${det.dayLabel}</td>`;
-      s += `<td style="padding:3px 4px;${hasMatch ? 'color:#1677ff;' : 'color:#ccc;'}">${hasMatch ? (doc ? doc.name : det.doctorId) : '未匹配'}</td>`;
+      s += `<td style="padding:3px 4px;${hasMatch ? 'color:#006A69;' : 'color:#ccc;'}">${hasMatch ? (doc ? doc.name : det.doctorId) : '未匹配'}</td>`;
       s += `</tr>`;
     }
     s += `</table></div>`;
 
     // 操作按钮
     s += `<div class="sh-btn-group">`;
-    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekDutyOrder" style="flex:2;">✅ 应用此顺序</button>`;
-    s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekDuty" style="flex:1;">🔄 重新加载</button>`;
+    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekDutyOrder" style="flex:2;"><span class="material-icons">check_circle</span> 应用此顺序</button>`;
+    s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekDuty" style="flex:1;"><span class="material-icons">refresh</span> 重新加载</button>`;
     s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearPrevWeekDutyPreview" style="flex:1;">✕ 清除</button>`;
     s += `</div>`;
 
@@ -1231,9 +1269,9 @@
 
   // ===== S3: 特殊安排 =====
   function renderS3(body) {
-    let h = `<div class="sh-info-bar info">💡 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
-    h += `<label>👨‍⚕️ 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d=>`<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 → 值班排班</button></div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
+    h += `<label><span class="material-icons">medical_services</span> 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d=>`<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 <span class="material-icons">arrow_forward</span> 值班排班</button></div>`;
     body.innerHTML = h;
   }
   function renderSpecialDocForm() {
@@ -1241,7 +1279,7 @@
     const did = sel.value; if (!did) { fd.innerHTML = ''; return; }
     const doc = getDoctor(did); if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {};
     let h = `<div class="sh-step-section">`;
-    h += `<div class="sh-subtitle" style="margin-top:0;">👨‍⚕️ ${doc.name} <span style="font-size:10px;color:#999;font-weight:400;">#${doc.number}</span></div>`;
+    h += `<div class="sh-subtitle" style="margin-top:0;"><span class="material-icons">medical_services</span> ${doc.name} <span style="font-size:10px;color:#999;font-weight:400;">#${doc.number}</span></div>`;
     h += `<div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="am">上午全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="pm">下午全选</button></div>`;
     h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除选中</button></div>`;
     for (let d = 0; d < 7; d++) { const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:3px;padding:5px 8px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:30px;">${A.DAYS[d]}</strong>`;
@@ -1255,21 +1293,21 @@
   function renderS4(body) {
     if (!state.dutyOrder || state.dutyOrder.length !== 8) state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
     const order = state.dutyOrder || [], pool = A.getDutyDoctorPool(state.doctors), flags = state.baiban1Flags || [];
-    let h = `<div class="sh-info-bar info">💡· 按住 ⋮⋮ 拖拽调整顺序。<br>· 节假日的中班自动转为休假。<br>· 已有安排不会被覆盖，安排后与门诊等冲突时，相应格子会闪烁提示。<br>· 重新执行自动排班，请先点清空按钮。</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span>· 按住 ⋮⋮ 拖拽调整顺序。<br>· 节假日的中班自动转为休假。<br>· 已有安排不会被覆盖，安排后与门诊等冲突时，相应格子会闪烁提示。<br>· 重新执行自动排班，请先点清空按钮。</div>`;
 
     // ---- 导入上周值班顺序区域 ----
     h += renderPrevWeekDutySection();
 
-    h += `<div class="sh-subtitle">📋 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id=>id&&getDoctor(id)).length}/8)</span></div>`;
+    h += `<div class="sh-subtitle"><span class="material-icons">list_alt</span> 值班序列 <span style="font-size:10px;color:#999;font-weight:400;">(${order.filter(id=>id&&getDoctor(id)).length}/8)</span></div>`;
     h += `<div id="sh-duty-order">`;
     for (let i = 0; i < 8; i++) { const did = order[i] || '', doc = getDoctor(did); h += `<div class="sh-duty-row" draggable="true" data-action="dutyDrag" data-idx="${i}"><span class="sh-drag-handle">⋮⋮</span><select data-action="updateDutyOrder" data-idx="${i}" style="flex:1;max-width:110px;font-size:10px;"><option value="">— 空 —</option>${pool.map(d=>`<option value="${d.id}" ${did===d.id?'selected':''}>${d.name}</option>`).join('')}</select><span class="sh-duty-desc">${A.getDutyRowDesc(state.workdayConfig, i)}</span></div>`; }
     h += `</div>`;
-    h += `<div class="sh-btn-group" style="margin-top:8px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder">🔄 重置默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="sh-cancel-zb"> 假期前一天取消中班</label></div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;padding:8px 16px;font-size:13px;">🤖 执行自动排班</button>`;
-    h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty" style="margin-top:4px;">🗑 清空值班安排</button>`;
-    if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:8px;">⚠️ 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
-    else h += `<div class="sh-info-bar success" style="margin-top:8px;">✅ 无冲突</div>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3">← 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 → 调整确认</button></div>`;
+    h += `<div class="sh-btn-group" style="margin-top:8px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder"><span class="material-icons">refresh</span> 重置默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="sh-cancel-zb"> 假期前一天取消中班</label></div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;padding:8px 16px;font-size:13px;"><span class="material-icons">manage_history</span> 执行自动排班</button>`;
+    h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty" style="margin-top:4px; font-size: 13px;"><span class="material-icons">delete</span> 清空值班安排</button>`;
+    if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:8px;"><span class="material-icons">warning</span> 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
+    else h += `<div class="sh-info-bar success" style="margin-top:8px;"><span class="material-icons">check_circle</span> 暂无冲突</div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 <span class="material-icons">arrow_forward</span> 调整确认</button></div>`;
     body.innerHTML = h;
     const cb = document.getElementById('sh-cancel-zb'); if (cb) { cb.checked = state.cancelPreHolidayZhongban; cb.addEventListener('change', function () { state.cancelPreHolidayZhongban = this.checked; }); }
   }
@@ -1277,19 +1315,19 @@
   // ===== S5: 确认 =====
   function renderS5(body) {
     const flags = state.baiban1Flags || [], trainees = state.doctors.filter(d => d.type === 'trainee');
-    let h = `<div class="sh-info-bar info">💡 点击下方"分配白1"按钮，可快速安排白班1！</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 点击下方"分配白1"按钮，可快速安排白班1！</div>`;
 
     // ===== （一）调整冲突 =====
     h += `<div class="sh-subtitle" style="font-size:13px;color:#333;">（一）调整冲突</div>`;
     if (flags.length) {
-      h += `<div class="sh-info-bar warn">⚠️ ${flags.length}个冲突可能需要安排白班1</div><ul class="sh-conflict-list">`;
+      h += `<div class="sh-info-bar warn"><span class="material-icons">warning</span> ${flags.length}个冲突可能需要安排白班1</div><ul class="sh-conflict-list">`;
       for (let f of flags) {
         const resolved = !!f.resolvedBy;
-        h += `<li class="${resolved ? 'resolved' : ''}" style="${resolved ? 'background:#f5f5f5;border-color:#d9d9d9;text-decoration:none;opacity:1;' : ''}"><span>${resolved ? 'ℹ️' : '⚠️'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${resolved ? '' : `<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`;
+        h += `<li class="${resolved ? 'resolved' : ''}" style="${resolved ? 'background:#f5f5f5;border-color:#d9d9d9;text-decoration:none;opacity:1;' : ''}"><span class="material-icons">${resolved ? 'info' : 'warning'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${resolved ? '' : `<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`;
       }
       h += `</ul>`;
     } else {
-      h += `<div class="sh-info-bar success">✅ 所有冲突已解决！</div>`;
+      h += `<div class="sh-info-bar success"><span class="material-icons">check_circle</span> 所有冲突已解决！</div>`;
     }
 
     // ===== （二）周末值班补休 =====
@@ -1305,30 +1343,30 @@
     // ===== （三）一键填补空缺 =====
     h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（三）一键填补空缺</div>`;
     h += `<div class="sh-help-text">依据设定的工作日/节假日：<br>工作日→<b style="color:#2196f3;">白班普</b> · 节假日→<b style="color:#999;">休假</b></div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty" style="margin-bottom:8px;padding:8px 16px;font-size:13px;">🪣 一键填空（白班普/休）</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty" style="margin-bottom:8px;padding:8px 16px;font-size:13px;"><span class="material-icons">water_drop</span> 一键填空（白班普/休）</button>`;
 
     // ===== （四）规培生一键安排 =====
     if (trainees.length) {
       h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（四）规培生一键安排</div>`;
       h += `<div class="sh-help-text">为 ${trainees.map(d => d.name).join('、')} 应用对应导师的排班（已设定的安排不会被覆盖）。</div>`;
-      h += `<button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees">🔄 为规培生应用导师排班</button>`;
+      h += `<button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees"><span class="material-icons">sync</span> 为规培生应用导师排班</button>`;
     }
 
     // ===== 流程结束 =====
-    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:14px;color:#333;">✅ 排班流程结束！</div>`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:14px;color:#333;"><span class="material-icons">check_circle</span> 排班流程结束！</div>`;
 
     // 统计
     const stats = A.computeWeekStats(state);
-    h += `<div class="sh-divider"></div><div class="sh-subtitle">📊 本周统计</div>`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle"><span class="material-icons">bar_chart</span> 本周统计</div>`;
     h += `<div class="sh-stats-wrap">${Object.entries(stats).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="sh-stat-tag" style="background:${A.TYPE_COLORS[k]}18;border-color:${A.TYPE_COLORS[k]}44;color:${A.TYPE_COLORS[k]};">${k}: ${v}次</span>`).join('') || '<span style="font-size:10px;color:#999;">暂无数据</span>'}</div>`;
 
     // 导出 / 导入 / 提交
     h += `<div class="sh-btn-group" style="margin-top:10px;">`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="exportFull">📤 导出完整配置</button>`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importFull">📥 导入完整配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="exportFull"><span class="material-icons">file_upload</span> 导出完整配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importFull"><span class="material-icons">file_download</span> 导入完整配置</button>`;
     h += `</div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll" style="margin-top:10px;padding:9px 16px;font-size:13px;">✅ 提交所有修改到系统</button>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="4">← 上一步</button></div>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll" style="margin-top:10px;padding:9px 16px;font-size:13px;"><span class="material-icons">check_circle</span> 提交所有修改到系统</button>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="4"><span class="material-icons">arrow_back</span> 上一步</button></div>`;
     body.innerHTML = h;
   }
 
@@ -1442,8 +1480,10 @@
     try {
       var fiberResult = await ScheduleAPI.switchWeek(targetWeek);
       if (fiberResult && fiberResult.year && fiberResult.monday) {
-        console.log('[排班辅助] ⚡ fiber切换成功:', fiberResult.year, '年 第', fiberResult.week, '周');
-        return fiberResult;
+        // 用 getWeekInfo 统一重算：picker/API 返回的 "monday" 可能是周日（antd 默认周日为首日）
+        var norm = getWeekInfo(new Date(fiberResult.monday));
+        console.log('[排班辅助] ⚡ fiber切换成功:', norm.year, '年 第', norm.week, '周 (原始week:', fiberResult.week, ', 原始monday:', fiberResult.monday, ')');
+        return { year: norm.year, week: norm.week, monday: norm.monday };
       }
     } catch (e) {
       console.warn('[排班辅助] fiber切换失败，回退DOM:', e.message);
@@ -1462,10 +1502,10 @@
     await waitForPickerDropdown();
 
     var result = await clickWeekInPicker(targetWeek);
-    var mondayDate = new Date(result.monday);
-    var year = mondayDate.getFullYear();
-    console.log('[排班辅助] DOM切换:', year, '年 第', result.week, '周, 周一:', result.monday);
-    return { year: year, week: result.week, monday: result.monday };
+    // 用 getWeekInfo 统一重算：picker 第1列是周日（antd 默认），不是周一
+    var norm = getWeekInfo(new Date(result.monday));
+    console.log('[排班辅助] DOM切换:', norm.year, '年 第', norm.week, '周 (picker显示', result.week, '周, 首列日期:', result.monday, ') → 修正周一:', norm.monday);
+    return { year: norm.year, week: norm.week, monday: norm.monday };
   }
 
   /**
@@ -1543,9 +1583,10 @@
   async function onWeekChanged(result) {
     weekInfo = { year: result.year, week: result.week, monday: result.monday };
 
-    // 清除门诊预览
+    // 清除门诊和值班预览缓存
     prevWeekOutpatientPreview = null;
     prevWeekOutpatientLoaded = false;
+    prevWeekDutyOrderPreview = null;
 
     // 重新加载所有数据（页面已通过API加载了对应周的数据）
     try {
