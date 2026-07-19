@@ -1350,8 +1350,45 @@
       h += `<div class="sh-info-bar success"><span class="material-icons">check_circle</span> 所有冲突已解决！</div>`;
     }
 
-    // ===== （二）周末值班补休 =====
-    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（二）周末值班补休</div>`;
+    // ===== （二）安排周末门诊 =====
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（二）安排周末门诊</div>`;
+    // 列出所有节假日及其索引
+    var holidayDayNames = [];
+    var holidayDayIndices = [];
+    for (let d = 0; d < 7; d++) {
+      if (A.isHoliday(state.workdayConfig, d)) {
+        holidayDayNames.push(A.DAYS[d]);
+        holidayDayIndices.push(d);
+      }
+    }
+    if (holidayDayNames.length > 0) {
+      // 检测已安排门诊的节假日
+      var arrangedDays = [];
+      var unarrangedDays = [];
+      for (var hi = 0; hi < holidayDayNames.length; hi++) {
+        var hd = holidayDayIndices[hi];
+        var gen = state.outpatientGeneral[hd] || { am: null, pm: null };
+        var hasGx = (state.outpatientGaoxin || []).some(function (a) { return a.dayIdx === hd; });
+        var hasZt = (state.outpatientZitong || []).some(function (a) { return a.dayIdx === hd; });
+        var amArranged = gen.am || hasGx || hasZt;
+        var pmArranged = gen.pm;
+        if (amArranged && pmArranged) {
+          arrangedDays.push(holidayDayNames[hi]);
+        } else {
+          unarrangedDays.push(holidayDayNames[hi]);
+        }
+      }
+      if (unarrangedDays.length > 0) {
+        h += `<div class="sh-info-bar warn" style="font-size:10px;"><span class="material-icons">edit_calendar</span> 请手动安排 <b>${unarrangedDays.join('、')}</b> 的周末门诊。</div>`;
+      } else {
+        h += `<div class="sh-info-bar success" style="font-size:10px;"><span class="material-icons">check_circle</span> ${holidayDayNames.join('、')} 周末门诊已全部安排完毕。</div>`;
+      }
+    } else {
+      h += `<div class="sh-help-text">本周无节假日，无需安排周末门诊。</div>`;
+    }
+
+    // ===== （三）周末值班补休 =====
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（三）周末值班补休</div>`;
     const wkDutyDocs = A.getWeekendDutyDoctors(state);
     if (wkDutyDocs.length > 0) {
       const names = wkDutyDocs.map(d => d.name).join('、');
@@ -1360,14 +1397,14 @@
       h += `<div class="sh-help-text">本周无人在节假日值班，无需安排补休。</div>`;
     }
 
-    // ===== （三）一键填补空缺 =====
-    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（三）一键填补空缺</div>`;
+    // ===== （四）一键填补空缺 =====
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（四）一键填补空缺</div>`;
     h += `<div class="sh-help-text">依据设定的工作日/节假日：<br>工作日→<b style="color:#2196f3;">白班普</b> · 节假日→<b style="color:#999;">休假</b></div>`;
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fillEmpty" style="margin-bottom:8px;padding:8px 16px;font-size:13px;"><span class="material-icons">water_drop</span> 一键填空（白班普/休）</button>`;
 
-    // ===== （四）规培生一键安排 =====
+    // ===== （五）规培生一键安排 =====
     if (trainees.length) {
-      h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（四）规培生一键安排</div>`;
+      h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（五）规培生一键安排</div>`;
       h += `<div class="sh-help-text">为 ${trainees.map(d => d.name).join('、')} 应用对应导师的排班（已设定的安排不会被覆盖）。</div>`;
       h += `<button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees"><span class="material-icons">sync</span> 为规培生应用导师排班</button>`;
     }
@@ -1777,8 +1814,23 @@
       conflictSet.add(`${c.dayIdx}_${c.slot}`);
     }
 
-    // 应用总院门诊（跳过冲突时段）
+    // 统计本周节假日天数
+    var holidayDayIndices = [];
     for (let d = 0; d < 7; d++) {
+      if (A.isHoliday(state.workdayConfig, d)) holidayDayIndices.push(d);
+    }
+    var skippedHoliday = 0;
+
+    // 应用总院门诊（跳过冲突时段 + 跳过节假日）
+    for (let d = 0; d < 7; d++) {
+      // 跳过本周节假日
+      if (A.isHoliday(state.workdayConfig, d)) {
+        for (let sl of ['am', 'pm']) {
+          const arr = (preview.outpatientGeneral[d] && preview.outpatientGeneral[d][sl]) ? preview.outpatientGeneral[d][sl] : [];
+          if (arr.length > 0) skippedHoliday++;
+        }
+        continue;
+      }
       for (let sl of ['am', 'pm']) {
         const key = `${d}_${sl}`;
         if (conflictSet.has(key)) {
@@ -1810,7 +1862,7 @@
       }
     }
 
-    // 应用高新门诊
+    // 应用高新门诊（跳过节假日）
     for (let ga of preview.outpatientGaoxin) {
       const exists = (state.outpatientGaoxin || []).some(
         a => a.dayIdx === ga.dayIdx && a.doctorId === ga.doctorId
@@ -1825,8 +1877,9 @@
       }
     }
 
-    // 应用梓潼门诊
+    // 应用梓潼门诊（跳过节假日）
     for (let zt of preview.outpatientZitong) {
+      if (A.isHoliday(state.workdayConfig, zt.dayIdx)) { skippedHoliday++; continue; }
       const exists = (state.outpatientZitong || []).some(
         a => a.dayIdx === zt.dayIdx && a.doctorId === zt.doctorId
       );
@@ -1840,17 +1893,29 @@
       }
     }
 
+    // 清除节假日门诊（确保节假日门诊格为空）
+    for (var hi = 0; hi < holidayDayIndices.length; hi++) {
+      var hd = holidayDayIndices[hi];
+      if (state.outpatientGeneral[hd]) {
+        state.outpatientGeneral[hd] = { am: null, pm: null };
+      }
+    }
+
     syncStateToBackground();
     renderPanel();
 
     console.log('[排班辅助] 📊 应用结果: 总院×' + appliedGeneral + ' 高新×' + appliedGaoxin + ' 梓潼×' + appliedZitong +
-      ' | 跳过: 冲突×' + skippedConflict + ' 已占用×' + skippedOccupied + ' 空×' + skippedEmpty);
+      ' | 跳过: 冲突×' + skippedConflict + ' 已占用×' + skippedOccupied + ' 空×' + skippedEmpty + ' 节假日×' + skippedHoliday);
 
     let msg = `已应用：总院门诊×${appliedGeneral} 高新门诊×${appliedGaoxin} 梓潼门诊×${appliedZitong}`;
     if (skippedConflict > 0) msg += `\n⚠️ ${skippedConflict} 个冲突时段已跳过，请手动处理`;
     if (skippedOccupied > 0) msg += `\n⏭️ ${skippedOccupied} 个时段已有安排，未覆盖`;
     if (preview.conflicts.length > 0) {
       msg += '\n💡 多个总院门诊的时段已自动将第2位设为简易门诊，请检查确认。';
+    }
+    if (skippedHoliday > 0) {
+      var holidayNames = holidayDayIndices.map(function (d) { return A.DAYS[d]; }).join('、');
+      msg += '\n📅 本周' + holidayNames + '为节假日，上周门诊数据已跳过，请在值班安排完成后手动指定周末门诊。';
     }
     if (appliedGeneral === 0 && appliedGaoxin === 0 && appliedZitong === 0) {
       msg += '\n⚠️ 未应用任何门诊数据，请检查控制台日志排查原因。';
@@ -2058,8 +2123,8 @@
   function updateSimple(i, f, v) { if (!state.outpatientSimple) state.outpatientSimple = []; if (!state.outpatientSimple[i]) state.outpatientSimple[i] = { dayIdx: null, doctorId: null, slot: null }; state.outpatientSimple[i][f] = (v || v === 0) ? v : null; syncStateToBackground(); applyToPageTable(); }
   function removeSimple(i) { state.outpatientSimple.splice(i, 1); renderPanel(); }
 
-  function clearOutpatient() {
-    if (!confirm('清空所有门诊安排？')) return;
+  async function clearOutpatient() {
+    if (!(await showModal({ title: '清空门诊', message: '清空所有门诊安排？', icon: 'delete' }))) return;
     state.outpatientGeneral = {}; state.outpatientSimple = []; state.outpatientGaoxin = []; state.outpatientZitong = [];
     for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
     renderPanel(); syncStateToBackground(); showToast('门诊安排已清空', 'success');
@@ -2087,7 +2152,7 @@
         try {
           const data = JSON.parse(ev.target.result);
           if (data.type !== 'outpatient' || !data.version) { showToast('无效的门诊配置文件', 'error'); return; }
-          if (!confirm('导入门诊安排？当前数据将被替换。')) return;
+          if (!(await showModal({ title: '导入门诊', message: '导入门诊安排？当前数据将被替换。', icon: 'file_download' }))) return;
           state.outpatientGeneral = data.outpatientGeneral || {};
           state.outpatientSimple = data.outpatientSimple || [];
           state.outpatientGaoxin = data.outpatientGaoxin || [];
