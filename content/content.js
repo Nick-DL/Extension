@@ -844,7 +844,11 @@
   function injectQuickEntry() {
     if (document.getElementById('sh-quick-entry')) return;
     const e = document.createElement('div'); e.id = 'sh-quick-entry'; e.className = 'hidden'; e.textContent = '排班辅助'; e.title = '点击打开排班辅助面板';
-    e.addEventListener('click', () => togglePanel(true)); document.body.appendChild(e);
+    e.addEventListener('click', () => togglePanel(true));
+    e.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    e.addEventListener('selectstart', (ev) => ev.preventDefault());
+    e.addEventListener('copy', (ev) => ev.preventDefault());
+    document.body.appendChild(e);
   }
   function injectToastContainer() {
     if (document.getElementById('sh-toast-container')) return;
@@ -860,6 +864,7 @@
       document.head.appendChild(style);
     }
     const p = document.createElement('div'); p.id = 'scheduling-helper-panel';
+    p.addEventListener('contextmenu', (ev) => ev.preventDefault());
     p.innerHTML = `<div class="sh-panel-header" id="sh-panel-header"><span class="sh-title"><span class="material-icons">local_hospital</span> 排班辅助</span><div class="sh-actions"><button class="sh-btn" id="sh-btn-minimize" title="最小化">−</button><button class="sh-btn" id="sh-btn-close" title="关闭">✕</button></div></div><div class="sh-steps-bar" id="sh-steps-bar"><div class="sh-step-item active" data-action="goToStep" data-step="1"><span class="sh-step-num">1</span>人员</div><div class="sh-step-item" data-action="goToStep" data-step="2"><span class="sh-step-num">2</span>门诊</div><div class="sh-step-item" data-action="goToStep" data-step="3"><span class="sh-step-num">3</span>特殊</div><div class="sh-step-item" data-action="goToStep" data-step="4"><span class="sh-step-num">4</span>值班</div><div class="sh-step-item" data-action="goToStep" data-step="5"><span class="sh-step-num">5</span>确认</div></div><div class="sh-panel-body" id="sh-panel-body"></div>`;
     document.body.appendChild(p);
     makeDraggable(p.querySelector('.sh-panel-header'), p);
@@ -1039,8 +1044,8 @@
   }
 
   // ==================== 面板控制 ====================
-  function togglePanel(show) { const p = document.getElementById('scheduling-helper-panel'); if (!p) return; panelVisible = show; if (show) { p.classList.add('visible'); if (isMinimized) toggleMinimize(); goToStep(state.currentStep); } else { p.classList.remove('visible'); } }
-  function toggleMinimize() { const p = document.getElementById('scheduling-helper-panel'), b = document.getElementById('sh-panel-body'), s = document.getElementById('sh-steps-bar'); if (!p) return; isMinimized = !isMinimized; if (isMinimized) { p.classList.add('minimized'); b.style.display = 'none'; s.style.display = 'none'; } else { p.classList.remove('minimized'); b.style.display = ''; s.style.display = ''; } }
+  function togglePanel(show) { const p = document.getElementById('scheduling-helper-panel'); if (!p) return; panelVisible = show; if (show) { p.classList.add('visible'); if (isMinimized) toggleMinimize(); goToStep(state.currentStep); document.getElementById('sh-quick-entry').classList.add('hidden'); } else { p.classList.remove('visible'); if (extEnabled) document.getElementById('sh-quick-entry').classList.remove('hidden'); } }
+  function toggleMinimize() { const p = document.getElementById('scheduling-helper-panel'), b = document.getElementById('sh-panel-body'), s = document.getElementById('sh-steps-bar'); if (!p) return; isMinimized = !isMinimized; if (isMinimized) { p.classList.add('minimized'); b.style.display = 'none'; s.style.display = 'none'; p.title = '打开浮窗'; document.getElementById('sh-quick-entry').classList.add('hidden'); } else { p.classList.remove('minimized'); b.style.display = ''; s.style.display = ''; p.title = ''; } }
 
   function goToStep(n) { state.currentStep = n; renderStepsBar(); renderPanel(); }
   function renderStepsBar() {
@@ -1116,7 +1121,7 @@
     h += `<div class="sh-workday-row">`;
     for (let d = 0; d < 7; d++) { const wd = (state.workdayConfig || [])[d]; h += `<button class="sh-btn-action sh-btn-sm ${wd ? 'sh-btn-primary' : 'sh-btn-outline'}" data-action="toggleWorkday" data-day="${d}">${A.DAYS[d]}</button>`; }
     h += `</div>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:6px;padding:8px 16px;font-size:13px;">下一步 <span class="material-icons">arrow_forward</span> 门诊安排</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:6px;padding:8px 16px;font-size:13px;">下一步 <span class="material-icons">arrow_forward</span> <small>门诊安排</small></button>`;
     body.innerHTML = h;
   }
 
@@ -1151,7 +1156,7 @@
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importOutpatient"><span class="material-icons">file_download</span> 导入配置</button>`;
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearOutpatient"><span class="material-icons">delete</span> 清空门诊</button>`;
     h += `</div>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 <span class="material-icons">arrow_forward</span> 特殊安排</button></div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 <span class="material-icons">arrow_forward</span> <small>特殊安排</small></button></div>`;
     body.innerHTML = h;
   }
   function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}">✕</button></div>`; }
@@ -1241,7 +1246,7 @@
       console.log('[排班辅助][值班导入] getWeekInfo结果:', JSON.stringify(prevWeekInfo));
       const prevLabel = `${prevMonday.getFullYear()}年 第${prevWeekInfo.week}周`;
       s += `<div class="sh-help-text">根据 <b>${prevLabel}</b> 的排班数据，自动重建值班医生序列。</div>`;
-      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekDuty" style="padding:8px 16px;font-size:13px;"><span class="material-icons">file_download</span> 导入上周值班顺序</button>`;
+      s += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="fetchPrevWeekDuty" style="padding:8px 16px;font-size:13px;"><span class="material-icons">file_download</span> 导入上一周值班顺序</button>`;
       return s;
     }
 
@@ -1284,7 +1289,7 @@
   function renderS3(body) {
     let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
     h += `<label><span class="material-icons">medical_services</span> 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d => `<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 <span class="material-icons">arrow_forward</span> 值班排班</button></div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 <span class="material-icons">arrow_forward</span> <small>值班排班</small></button></div>`;
     body.innerHTML = h;
   }
   function renderSpecialDocForm() {
@@ -1322,7 +1327,7 @@
     h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty" style="margin-top:4px; font-size: 13px;"><span class="material-icons">delete</span> 清空值班安排</button>`;
     if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:8px;"><span class="material-icons">warning</span> 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
     else h += `<div class="sh-info-bar success" style="margin-top:8px;"><span class="material-icons">check_circle</span> 暂无冲突</div>`;
-    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 <span class="material-icons">arrow_forward</span> 调整确认</button></div>`;
+    h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 <span class="material-icons">arrow_forward</span> <small>调整确认</small></button></div>`;
     body.innerHTML = h;
     const cb = document.getElementById('sh-cancel-zb'); if (cb) { cb.checked = state.cancelPreHolidayZhongban; cb.addEventListener('change', function () { state.cancelPreHolidayZhongban = this.checked; }); }
   }
@@ -1368,7 +1373,7 @@
     }
 
     // ===== 流程结束 =====
-    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:14px;color:#333;"><span class="material-icons">check_circle</span> 排班流程结束！</div>`;
+    h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:16px;color:#333;"><span class="material-icons" style="color: rgb(56, 158, 13);">check_circle</span> 排班流程结束！</div>`;
 
     // 统计
     const stats = A.computeWeekStats(state);
