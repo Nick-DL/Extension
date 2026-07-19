@@ -220,7 +220,7 @@
   align-items: center;
   gap: 3px;
 }
-.sh-btn-primary { background: #006A69; color: #fff; }
+.sh-btn-primary { background: #006A69; color: #fff; border: 1px solid transparent; }
 .sh-btn-primary:hover { background: #00857D; }
 .sh-btn-danger { background: #ff4d4f; color: #fff; }
 .sh-btn-danger:hover { background: #ff7875; }
@@ -322,7 +322,7 @@
 }
 
 /* ========== 冲突列表 ========== */
-.sh-conflict-list { list-style: none; }
+.sh-conflict-list { list-style: none; padding: 0; }
 .sh-conflict-list li {
   padding: 6px 8px;
   margin: 3px 0;
@@ -447,6 +447,131 @@
   gap: 2px;
   flex-wrap: wrap;
   margin-top: 2px;
+}
+
+/* ========== Material 风格自定义 Modal（仅覆盖浮窗内部） ========== */
+.sh-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sh-modal-overlay.visible {
+  background: rgba(0, 0, 0, 0.5);
+}
+.sh-modal-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 11px 15px -7px rgba(0,0,0,0.2), 0 24px 38px 3px rgba(0,0,0,0.14), 0 9px 46px 8px rgba(0,0,0,0.12);
+  width: calc(100% - 32px);
+  max-width: 360px;
+  transform: scale(0.85);
+  opacity: 0;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+.sh-modal-overlay.visible .sh-modal-card {
+  transform: scale(1);
+  opacity: 1;
+}
+.sh-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 24px 8px;
+}
+.sh-modal-icon {
+  font-size: 22px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.sh-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #212121;
+  line-height: 1.4;
+}
+.sh-modal-body {
+  padding: 8px 24px 16px;
+}
+.sh-modal-message {
+  font-size: 13px;
+  color: #616161;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-line;
+}
+.sh-modal-select-wrap {
+  margin-top: 12px;
+}
+.sh-modal-select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #bdbdbd;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #212121;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.2s;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23757575' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+}
+.sh-modal-select:focus {
+  border-color: #006A69;
+  box-shadow: 0 0 0 2px rgba(0, 106, 105, 0.15);
+}
+.sh-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 16px 16px;
+}
+.sh-modal-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: all 0.2s;
+  min-width: 72px;
+  text-align: center;
+  outline: none;
+}
+.sh-modal-btn:focus-visible {
+  box-shadow: 0 0 0 3px rgba(0, 106, 105, 0.3);
+}
+.sh-modal-btn-cancel {
+  background: transparent;
+  color: #006A69;
+}
+.sh-modal-btn-cancel:hover {
+  background: rgba(0, 106, 105, 0.08);
+}
+.sh-modal-btn-cancel:active {
+  background: rgba(0, 106, 105, 0.16);
+}
+.sh-modal-btn-ok {
+  background: #006A69;
+  color: #fff;
+}
+.sh-modal-btn-ok:hover {
+  background: #00857D;
+  box-shadow: 0 2px 8px rgba(0, 106, 105, 0.3);
+}
+.sh-modal-btn-ok:active {
+  background: #005250;
 }
 .sh-week-picker input[type="number"] {
   width: 60px;

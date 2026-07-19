@@ -165,6 +165,93 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
 .info-row .value { font-weight: 500; }
 .divider { border: none; border-top: 1px solid #f0f0f0; margin: 10px 0; }
 .footer { padding: 8px 16px; border-top: 1px solid #f0f0f0; font-size: 10px; color: #bbb; text-align: center; }
+
+/* ========== Material Modal（Popup内嵌） ========== */
+.popup-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.popup-modal-overlay.visible {
+  background: rgba(0, 0, 0, 0.5);
+}
+.popup-modal-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 11px 15px -7px rgba(0,0,0,0.2), 0 24px 38px 3px rgba(0,0,0,0.14), 0 9px 46px 8px rgba(0,0,0,0.12);
+  width: 280px;
+  transform: scale(0.85);
+  opacity: 0;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+.popup-modal-overlay.visible .popup-modal-card {
+  transform: scale(1);
+  opacity: 1;
+}
+.popup-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 6px;
+}
+.popup-modal-icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.popup-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #212121;
+}
+.popup-modal-body {
+  padding: 6px 20px 14px;
+}
+.popup-modal-message {
+  font-size: 12px;
+  color: #616161;
+  line-height: 1.6;
+  margin: 0;
+}
+.popup-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 12px 14px;
+}
+.popup-modal-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: all 0.2s;
+  min-width: 64px;
+  text-align: center;
+  outline: none;
+}
+.popup-modal-btn-cancel {
+  background: transparent;
+  color: var(--primary);
+}
+.popup-modal-btn-cancel:hover {
+  background: rgba(0, 106, 105, 0.08);
+}
+.popup-modal-btn-ok {
+  background: var(--primary);
+  color: #fff;
+}
+.popup-modal-btn-ok:hover {
+  background: #00857D;
+}
 </style>
 </head>
 <body>

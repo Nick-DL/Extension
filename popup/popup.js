@@ -232,8 +232,8 @@ async function refreshData() {
   });
 }
 
-function restoreData() {
-  if (!confirm('确定要恢复原始备份数据？当前所有修改将丢失。')) return;
+async function restoreData() {
+  if (!(await showPopupModal({ title: '确认恢复', message: '确定要恢复原始备份数据？当前所有修改将丢失。', icon: 'warning_amber' }))) return;
   chrome.tabs.query({ active: true, currentWindow: true }, async ([tab]) => {
     if (!tab) return;
     // 先检查是否已注入
@@ -314,4 +314,71 @@ function showPopupToast(msg, type) {
   toast.textContent = msg;
   document.querySelector('.content').appendChild(toast);
   setTimeout(() => toast.remove(), 4000);
+}
+
+/**
+ * Material 风格自定义 Modal（Popup 专用）
+ */
+function showPopupModal(opts) {
+  return new Promise(function (resolve) {
+    var existing = document.querySelector('.popup-modal-overlay');
+    if (existing) existing.remove();
+
+    var title = opts.title || '提示';
+    var message = opts.message || '';
+    var icon = opts.icon || '';
+    var okLabel = opts.okLabel || '确定';
+    var cancelLabel = opts.cancelLabel !== undefined ? opts.cancelLabel : '取消';
+
+    var overlay = document.createElement('div');
+    overlay.className = 'popup-modal-overlay';
+    overlay.innerHTML =
+      '<div class="popup-modal-card">' +
+        '<div class="popup-modal-header">' +
+          (icon ? '<span class="material-icons popup-modal-icon">' + icon + '</span>' : '') +
+          '<span class="popup-modal-title">' + title + '</span>' +
+        '</div>' +
+        '<div class="popup-modal-body">' +
+          '<p class="popup-modal-message">' + message + '</p>' +
+        '</div>' +
+        '<div class="popup-modal-footer">' +
+          (cancelLabel !== null
+            ? '<button class="popup-modal-btn popup-modal-btn-cancel">' + cancelLabel + '</button>'
+            : '') +
+          '<button class="popup-modal-btn popup-modal-btn-ok">' + okLabel + '</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(function () { overlay.classList.add('visible'); });
+
+    var okBtn = overlay.querySelector('.popup-modal-btn-ok');
+    var cancelBtn = overlay.querySelector('.popup-modal-btn-cancel');
+
+    function close(result) {
+      overlay.classList.remove('visible');
+      setTimeout(function () { overlay.remove(); }, 250);
+      resolve(result);
+    }
+
+    okBtn.addEventListener('click', function () { close(true); });
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', function () { close(false); });
+    }
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay && cancelLabel !== null) { close(false); }
+    });
+
+    var escHandler = function (e) {
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', escHandler);
+        close(false);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    setTimeout(function () { okBtn.focus(); }, 100);
+  });
 }

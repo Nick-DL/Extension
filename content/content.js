@@ -53,6 +53,110 @@
     setTimeout(() => t.remove(), 3000);
   }
 
+  /**
+   * Material 风格自定义 Modal（覆盖在浮窗面板内部）
+   * @param {Object} opts
+   *   - title      {string}  标题
+   *   - message    {string}  正文（支持 \n 换行）
+   *   - icon       {string}  Material Icons 图标名，可选
+   *   - okLabel    {string}  确定按钮文字，默认"确定"
+   *   - cancelLabel {string|null} 取消按钮文字，传 null 则隐藏取消按钮
+   *   - type       {'confirm'|'select'} 类型，默认 confirm
+   *   - selectOptions {Array<{value,label}>} type='select' 时的下拉选项
+   * @returns {Promise<boolean|string|null>} confirm→true/false，select→选中的value或null
+   */
+  function showModal(opts) {
+    return new Promise(function (resolve) {
+      var panel = document.getElementById('scheduling-helper-panel');
+      if (!panel) { resolve(false); return; }
+
+      var existing = panel.querySelector('.sh-modal-overlay');
+      if (existing) existing.remove();
+
+      var title = opts.title || '提示';
+      var message = opts.message || '';
+      var icon = opts.icon || '';
+      var okLabel = opts.okLabel || '确定';
+      var cancelLabel = opts.cancelLabel !== undefined ? opts.cancelLabel : '取消';
+      var type = opts.type || 'confirm';
+      var selectOptions = opts.selectOptions || [];
+
+      var overlay = document.createElement('div');
+      overlay.className = 'sh-modal-overlay';
+
+      var bodyHTML = '';
+      if (type === 'select' && selectOptions.length) {
+        bodyHTML = '<div class="sh-modal-select-wrap"><select class="sh-modal-select">' +
+          selectOptions.map(function (o, i) {
+            var v = o.value !== undefined ? o.value : i;
+            return '<option value="' + v + '">' + o.label + '</option>';
+          }).join('') +
+          '</select></div>';
+      }
+
+      overlay.innerHTML =
+        '<div class="sh-modal-card">' +
+          '<div class="sh-modal-header">' +
+            (icon ? '<span class="material-icons sh-modal-icon">' + icon + '</span>' : '') +
+            '<span class="sh-modal-title">' + title + '</span>' +
+          '</div>' +
+          '<div class="sh-modal-body">' +
+            '<p class="sh-modal-message">' + message + '</p>' +
+            bodyHTML +
+          '</div>' +
+          '<div class="sh-modal-footer">' +
+            (cancelLabel !== null
+              ? '<button class="sh-modal-btn sh-modal-btn-cancel">' + cancelLabel + '</button>'
+              : '') +
+            '<button class="sh-modal-btn sh-modal-btn-ok">' + okLabel + '</button>' +
+          '</div>' +
+        '</div>';
+
+      panel.appendChild(overlay);
+      requestAnimationFrame(function () { overlay.classList.add('visible'); });
+
+      var okBtn = overlay.querySelector('.sh-modal-btn-ok');
+      var cancelBtn = overlay.querySelector('.sh-modal-btn-cancel');
+      var selectEl = overlay.querySelector('.sh-modal-select');
+
+      function close(result) {
+        overlay.classList.remove('visible');
+        setTimeout(function () { overlay.remove(); }, 250);
+        resolve(result);
+      }
+
+      okBtn.addEventListener('click', function () {
+        if (type === 'select' && selectEl) {
+          close(selectEl.value);
+        } else {
+          close(true);
+        }
+      });
+
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', function () {
+          close(type === 'select' ? null : false);
+        });
+      }
+
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay && cancelLabel !== null) {
+          close(type === 'select' ? null : false);
+        }
+      });
+
+      var escHandler = function (e) {
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', escHandler);
+          close(type === 'select' ? null : false);
+        }
+      };
+      document.addEventListener('keydown', escHandler);
+
+      setTimeout(function () { okBtn.focus(); }, 100);
+    });
+  }
+
   // ==================== 初始化 ====================
   function init() {
     for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
@@ -483,9 +587,9 @@
   }
 
   // ==================== 恢复原始数据 ====================
-  function restoreOriginalData() {
+  async function restoreOriginalData() {
     if (!originalData) { showToast('没有可恢复的备份数据', 'warn'); return; }
-    if (!confirm('确定恢复为操作前的原始数据？')) return;
+    if (!(await showModal({ title: '确认恢复', message: '确定恢复为操作前的原始数据？', icon: 'warning_amber' }))) return;
     state.doctors = JSON.parse(JSON.stringify(originalData.doctors || []));
     state.outpatientGeneral = JSON.parse(JSON.stringify(originalData.outpatientGeneral || {}));
     state.outpatientSimple = JSON.parse(JSON.stringify(originalData.outpatientSimple || []));
@@ -826,7 +930,7 @@
 
   // ==================== 提交 ====================
   async function submitAllChanges() {
-    if (!confirm('确定提交所有排班修改？\n提交成功后请刷新页面查看。')) return;
+    if (!(await showModal({ title: '确认提交', message: '确定提交所有排班修改？\n提交成功后请刷新页面查看。', icon: 'file_upload' }))) return;
     try {
       const bd = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday);
       console.log('[排班辅助] 📤 提交数据 (' + bd.length + '条):', JSON.stringify(bd.slice(0, 3)) + (bd.length > 3 ? '...' : ''));
@@ -836,7 +940,7 @@
       showToast(`成功提交 ${bd.length} 条排班记录！请刷新页面查看。`, 'success');
       if (restoreFetch) { restoreFetch(); restoreFetch = null; }
       chrome.runtime.sendMessage({ type: 'SET_INTERCEPTING', intercepting: false });
-      setTimeout(() => { if (confirm('排班已提交成功，是否刷新页面？')) window.location.reload(); }, 1500);
+      setTimeout(async () => { if (await showModal({ title: '提交成功', message: '排班已提交成功，是否刷新页面？', icon: 'check_circle', cancelLabel: '稍后' })) window.location.reload(); }, 1500);
     } catch (err) { showToast('提交异常: ' + err.message, 'error'); }
   }
 
@@ -1101,7 +1205,7 @@
       let rightHtml = '';
       if (d.type === 'trainee') {
         const selectedId = d.mentorId || '';
-        rightHtml = `<span style="font-size:11px;color:#555;white-space:nowrap;">导师：<select data-action="updateMentor" data-doc="${d.id}" style="font-size:12px;padding:2px 6px;border:1px solid #bbb;border-radius:4px;max-width:130px;color:#333;" title="指定导师">
+        rightHtml = `<span style="font-size:11px;color:#555;white-space:nowrap;">导师：<select data-action="updateMentor" data-doc="${d.id}" style="font-size:12px;padding:2px 6px;border:1px solid #bbb;border-radius:4px;max-width:110px;color:#333;" title="指定导师">
           ${mentorOptsHtml.replace(`value="${selectedId}"`, `value="${selectedId}" selected`)}
         </select></span>`;
       }
@@ -1159,9 +1263,9 @@
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="1"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="3">下一步 <span class="material-icons">arrow_forward</span> <small>特殊安排</small></button></div>`;
     body.innerHTML = h;
   }
-  function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}">✕</button></div>`; }
-  function renderZtRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateZitong" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateZitong" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeZitong" data-idx="${i}">✕</button></div>`; }
-  function renderSmRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateSimple" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">日期</option>${[0, 1, 2, 3, 4, 5, 6].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateSimple" data-idx="${i}" data-field="slot" style="flex:0.7;font-size:10px;"><option value="">时段</option><option value="am" ${it.slot === 'am' ? 'selected' : ''}>上午</option><option value="pm" ${it.slot === 'pm' ? 'selected' : ''}>下午</option></select><select data-action="updateSimple" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeSimple" data-idx="${i}">✕</button></div>`; }
+  function renderGxRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateGaoxin" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateGaoxin" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeGaoxin" data-idx="${i}" style="max-width:20px;">✕</button></div>`; }
+  function renderZtRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateZitong" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">选择日期</option>${[0, 1, 2, 3, 4].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateZitong" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">选择医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeZitong" data-idx="${i}" style="max-width:20px;">✕</button></div>`; }
+  function renderSmRow(i, it) { it = it || {}; return `<div class="sh-form-row" style="align-items:center;margin-bottom:2px;"><select data-action="updateSimple" data-idx="${i}" data-field="dayIdx" style="flex:1;font-size:10px;"><option value="">日期</option>${[0, 1, 2, 3, 4, 5, 6].map(d => `<option value="${d}" ${it.dayIdx === d ? 'selected' : ''}>${A.DAYS[d]}</option>`).join('')}</select><select data-action="updateSimple" data-idx="${i}" data-field="slot" style="flex:0.7;font-size:10px;"><option value="">时段</option><option value="am" ${it.slot === 'am' ? 'selected' : ''}>上午</option><option value="pm" ${it.slot === 'pm' ? 'selected' : ''}>下午</option></select><select data-action="updateSimple" data-idx="${i}" data-field="doctorId" style="flex:1;font-size:10px;"><option value="">医生</option>${docOptsHtmlSelected(it.doctorId || '')}</select><button class="sh-btn-action sh-btn-danger sh-btn-xs" data-action="removeSimple" data-idx="${i}" style="max-width:20px;">✕</button></div>`; }
 
   // ===== 上周门诊导入预览渲染 =====
   function renderPrevWeekOutpatientSection() {
@@ -1299,7 +1403,7 @@
     let h = `<div class="sh-step-section">`;
     h += `<div class="sh-subtitle" style="margin-top:0;"><span class="material-icons">medical_services</span> ${doc.name} <span style="font-size:10px;color:#999;font-weight:400;">#${doc.number}</span></div>`;
     h += `<div class="sh-btn-group"><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="true" data-doc="${did}">全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleAllSpecial" data-on="false" data-doc="${did}">取消全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleWorkdaySpecial" data-doc="${did}">工作日全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="am">上午全选</button><button class="sh-btn-action sh-btn-xs sh-btn-outline" data-action="toggleSlotSpecial" data-doc="${did}" data-slot="pm">下午全选</button></div>`;
-    h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:1;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}">清除选中</button></div>`;
+    h += `<div class="sh-form-row" style="margin:8px 0;"><select id="sh-batch-special-type" style="flex:5;font-size:10px;"><option value="">选择批量应用的类型</option>${A.SPECIAL_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select><button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="batchSpecial" data-doc="${did}" style="flex:1.5;text-align:center;justify-content:center;">应用</button><button class="sh-btn-action sh-btn-danger sh-btn-sm" data-action="batchClearSpecial" data-doc="${did}" style="flex:1.5;text-align:center;justify-content:center;">清除选中</button></div>`;
     for (let d = 0; d < 7; d++) {
       const sp = (state.special[did] || {})[d] || { am: null, pm: null }; const bg = A.isHoliday(state.workdayConfig, d) ? '#fffbe6' : '#fafafa'; h += `<div style="margin-bottom:3px;padding:5px 8px;background:${bg};border-radius:4px;font-size:10px;display:flex;align-items:center;gap:4px;"><strong style="min-width:30px;">${A.DAYS[d]}</strong>`;
       for (let sl of A.SLOTS) h += `<label style="display:flex;align-items:center;gap:2px;flex:1;font-size:9px;cursor:pointer;"><input type="checkbox" class="sh-special-chk" data-doc="${did}" data-day="${d}" data-slot="${sl}">${A.SLOT_LABELS[sl]}<select data-action="updateSpecial" data-doc="${did}" data-day="${d}" data-slot="${sl}" style="flex:1;font-size:10px;"><option value="">—</option>${A.SPECIAL_TYPES.map(t => `<option value="${t}" ${sp[sl] === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
@@ -1340,7 +1444,7 @@
     // ===== （一）调整冲突 =====
     h += `<div class="sh-subtitle" style="font-size:13px;color:#333;">（一）调整冲突</div>`;
     if (flags.length) {
-      h += `<div class="sh-info-bar warn"><span class="material-icons">warning</span> ${flags.length}个冲突可能需要安排白班1</div><ul class="sh-conflict-list">`;
+      h += `<div class="sh-info-bar warn" style="margin-bottom:0;"><span class="material-icons">warning</span> ${flags.length}个冲突可能需要安排白班1</div><ul class="sh-conflict-list">`;
       for (let f of flags) {
         const resolved = !!f.resolvedBy;
         h += `<li class="${resolved ? 'resolved' : ''}" style="${resolved ? 'background:#f5f5f5;border-color:#d9d9d9;text-decoration:none;opacity:1;' : ''}"><span class="material-icons">${resolved ? 'info' : 'warning'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${resolved ? '' : `<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`;
@@ -1864,6 +1968,7 @@
 
     // 应用高新门诊（跳过节假日）
     for (let ga of preview.outpatientGaoxin) {
+      if (A.isHoliday(state.workdayConfig, ga.dayIdx)) { skippedHoliday++; continue; }
       const exists = (state.outpatientGaoxin || []).some(
         a => a.dayIdx === ga.dayIdx && a.doctorId === ga.doctorId
       );
@@ -2148,7 +2253,7 @@
     input.addEventListener('change', function (e) {
       const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
-      reader.onload = function (ev) {
+      reader.onload = async function (ev) {
         try {
           const data = JSON.parse(ev.target.result);
           if (data.type !== 'outpatient' || !data.version) { showToast('无效的门诊配置文件', 'error'); return; }
@@ -2173,9 +2278,9 @@
   function batchClearSpecial(did) { const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = null; }); renderSpecialDocForm(); syncStateToBackground(); applyToPageTable(); showToast(`已清除 ×${chk.length}`, 'success'); }
   function updateDutyOrder(i, did) { if (!state.dutyOrder) state.dutyOrder = []; while (state.dutyOrder.length < 8) state.dutyOrder.push(''); state.dutyOrder[i] = did || ''; renderPanel(); syncStateToBackground(); }
   function resetDutyOrder() { state.dutyOrder = A.buildDefaultDutyOrder(state.doctors); renderPanel(); }
-  function runAutoDuty() { const f = (state.dutyOrder || []).filter(id => id && getDoctor(id)).length; if (!f) { showToast('请先设置值班序列', 'warn'); return; } if (!confirm('执行自动排班？已有安排不会被覆盖。')) return; const r = A.computeAutoDuty(state); state.dutyAssigned = r.dutyAssigned; state.baiban1Flags = r.baiban1Flags; renderPanel(); syncStateToBackground(); const c = state.baiban1Flags.filter(fl => fl.isConflict).length; showToast(c ? `排班完成！${c}个冲突需处理` : '排班完成，无冲突！', c ? 'warn' : 'success'); }
-  function clearDuty() { if (!confirm('清空所有值班安排？')) return; state.dutyAssigned = {}; state.baiban1Flags = []; renderPanel(); }
-  function quickBaiban1(di, sl) { const cand = A.getBaiban1Candidates(state, di, sl); if (!cand.length) { showToast('无可用医生', 'warn'); return; } const names = cand.map((d, i) => `${i + 1}. ${d.name}(#${d.number})`).join('\n'); const choice = prompt(`选择白班1医生（${A.DAYS[di]}${A.SLOT_LABELS[sl]}）:\n\n${names}\n\n输入序号:`); if (!choice) return; const idx = +choice - 1; if (idx < 0 || idx >= cand.length) { showToast('无效选择', 'error'); return; } const doc = cand[idx]; if (!state.dutyAssigned) state.dutyAssigned = {}; if (!state.dutyAssigned[doc.id]) state.dutyAssigned[doc.id] = {}; if (!state.dutyAssigned[doc.id][di]) state.dutyAssigned[doc.id][di] = { am: null, pm: null }; state.dutyAssigned[doc.id][di][sl] = '白班1'; state.baiban1Flags = A.resolveConflict(state.baiban1Flags, di, sl, doc.id, doc.name); renderPanel(); syncStateToBackground(); }
+  async function runAutoDuty() { const f = (state.dutyOrder || []).filter(id => id && getDoctor(id)).length; if (!f) { showToast('请先设置值班序列', 'warn'); return; } if (!(await showModal({ title: '自动排班', message: '执行自动排班？已有安排不会被覆盖。', icon: 'manage_history' }))) return; const r = A.computeAutoDuty(state); state.dutyAssigned = r.dutyAssigned; state.baiban1Flags = r.baiban1Flags; renderPanel(); syncStateToBackground(); const c = state.baiban1Flags.filter(fl => fl.isConflict).length; showToast(c ? `排班完成！${c}个冲突需处理` : '排班完成，无冲突！', c ? 'warn' : 'success'); }
+  async function clearDuty() { if (!(await showModal({ title: '清空值班', message: '清空所有值班安排？', icon: 'delete' }))) return; state.dutyAssigned = {}; state.baiban1Flags = []; renderPanel(); }
+  async function quickBaiban1(di, sl) { const cand = A.getBaiban1Candidates(state, di, sl); if (!cand.length) { showToast('无可用医生', 'warn'); return; } const choice = await showModal({ title: '分配白班1', message: `为 ${A.DAYS[di]}${A.SLOT_LABELS[sl]} 选择白班1医生：`, icon: 'personal_injury', type: 'select', selectOptions: cand.map((d, i) => ({ value: String(i), label: `${i + 1}. ${d.name}（#${d.number}）` })), okLabel: '确定', cancelLabel: '取消' }); if (choice === null) return; const idx = +choice; const doc = cand[idx]; if (!state.dutyAssigned) state.dutyAssigned = {}; if (!state.dutyAssigned[doc.id]) state.dutyAssigned[doc.id] = {}; if (!state.dutyAssigned[doc.id][di]) state.dutyAssigned[doc.id][di] = { am: null, pm: null }; state.dutyAssigned[doc.id][di][sl] = '白班1'; state.baiban1Flags = A.resolveConflict(state.baiban1Flags, di, sl, doc.id, doc.name); renderPanel(); syncStateToBackground(); }
   function fillEmpty() { const r = A.computeFillEmpty(state); state.dutyAssigned = r.dutyAssigned; renderPanel(); syncStateToBackground(); showToast(`已填补 ${r.count} 个空缺`, 'success'); }
   function syncTrainees() { const r = A.computeTraineeSync(state); state.dutyAssigned = r.dutyAssigned; state.traineeFlags = r.traineeFlags; renderPanel(); syncStateToBackground(); showToast('规培生已同步导师排班', 'success'); }
 
@@ -2218,11 +2323,11 @@
     input.addEventListener('change', function (e) {
       const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
-      reader.onload = function (ev) {
+      reader.onload = async function (ev) {
         try {
           const data = JSON.parse(ev.target.result);
           if (data.type !== 'fullSchedule' || !data.version) { showToast('无效的排班配置文件', 'error'); return; }
-          if (!confirm('导入完整排班表？当前所有排班数据将被替换。')) return;
+          if (!(await showModal({ title: '导入排班', message: '导入完整排班表？当前所有排班数据将被替换。', icon: 'file_download' }))) return;
           if (data.doctors && data.doctors.length > 0) {
             state.doctors = data.doctors.map(d => ({
               id: d.id, name: d.name, type: d.type, number: d.number,
