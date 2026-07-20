@@ -1327,7 +1327,7 @@
 
     // 操作按钮
     s += `<div class="sh-btn-group">`;
-    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekOutpatient" style="flex:2;"><span class="material-icons">check_circle</span> 应用到本周</button>`;
+    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekOutpatient" style="flex:5;"><span class="material-icons">check_circle</span> 应用到本周</button>`;
     s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekOutpatient" style="flex:1;"><span class="material-icons">refresh</span> 重新加载</button>`;
     s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearPrevWeekPreview" style="flex:1;">✕ 清除</button>`;
     s += `</div>`;
@@ -1381,7 +1381,7 @@
 
     // 操作按钮
     s += `<div class="sh-btn-group">`;
-    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekDutyOrder" style="flex:2;"><span class="material-icons">check_circle</span> 应用此顺序</button>`;
+    s += `<button class="sh-btn-action sh-btn-success sh-btn-sm" data-action="applyPrevWeekDutyOrder" style="flex:5;"><span class="material-icons">check_circle</span> 应用此顺序</button>`;
     s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="fetchPrevWeekDuty" style="flex:1;"><span class="material-icons">refresh</span> 重新加载</button>`;
     s += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="clearPrevWeekDutyPreview" style="flex:1;">✕ 清除</button>`;
     s += `</div>`;
