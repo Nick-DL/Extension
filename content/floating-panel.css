@@ -364,6 +364,7 @@
 .sh-toast.success { background: #52c41a; }
 .sh-toast.warn { background: #faad14; color: #333; }
 .sh-toast.error { background: #ff4d4f; }
+.sh-toast.info { background: #1677ff; }
 @keyframes shSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes shFadeOut { from { opacity: 1; } to { opacity: 0; } }
 

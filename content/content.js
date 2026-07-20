@@ -930,14 +930,39 @@
 
   // ==================== 提交 ====================
   async function submitAllChanges() {
-    if (!(await showModal({ title: '确认提交', message: '确定提交所有排班修改？\n提交成功后请刷新页面查看。', icon: 'file_upload' }))) return;
+    if (!(await showModal({ title: '确认提交', message: '确定提交所有排班修改？\n插件将分两批提交：先提交上午的排班，再提交下午的排班。\n提交成功后请刷新页面查看。', icon: 'file_upload' }))) return;
     try {
-      const bd = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday);
-      console.log('[排班辅助] 📤 提交数据 (' + bd.length + '条):', JSON.stringify(bd.slice(0, 3)) + (bd.length > 3 ? '...' : ''));
-      if (!bd.length) { showToast('没有需要提交的修改', 'warn'); return; }
-      const resp = await ScheduleAPI.appendUsualClass(bd);
-      if (resp.error) { showToast('提交失败: ' + (resp.message || '未知错误'), 'error'); return; }
-      showToast(`成功提交 ${bd.length} 条排班记录！请刷新页面查看。`, 'success');
+      // 分别构建上午和下午的数据
+      const bdAM = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday, 'am');
+      const bdPM = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday, 'pm');
+      const totalCount = bdAM.length + bdPM.length;
+      console.log('[排班辅助] 📤 提交数据: 上午' + bdAM.length + '条 + 下午' + bdPM.length + '条 = 共' + totalCount + '条');
+      if (!totalCount) { showToast('没有需要提交的修改', 'warn'); return; }
+
+      // 第一阶段：提交上午
+      if (bdAM.length > 0) {
+        showToast('⏳ 正在提交上午排班 (' + bdAM.length + '条)...', 'info');
+        const respAM = await ScheduleAPI.appendUsualClass(bdAM);
+        if (respAM.error) {
+          showToast('提交上午排班失败: ' + (respAM.message || '未知错误'), 'error');
+          return;
+        }
+        console.log('[排班辅助] ✅ 上午排班提交成功 (' + bdAM.length + '条)');
+      }
+
+      // 第二阶段：提交下午（延迟 500ms，确保后端处理完毕）
+      if (bdPM.length > 0) {
+        showToast('⏳ 正在提交下午排班 (' + bdPM.length + '条)...', 'info');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const respPM = await ScheduleAPI.appendUsualClass(bdPM);
+        if (respPM.error) {
+          showToast('上午已提交成功，但下午提交失败: ' + (respPM.message || '未知错误'), 'error');
+          return;
+        }
+        console.log('[排班辅助] ✅ 下午排班提交成功 (' + bdPM.length + '条)');
+      }
+
+      showToast(`✅ 成功提交 ${totalCount} 条排班记录（上午${bdAM.length}条 + 下午${bdPM.length}条）！请刷新页面查看。`, 'success');
       if (restoreFetch) { restoreFetch(); restoreFetch = null; }
       chrome.runtime.sendMessage({ type: 'SET_INTERCEPTING', intercepting: false });
       setTimeout(async () => { if (await showModal({ title: '提交成功', message: '排班已提交成功，是否刷新页面？', icon: 'check_circle', cancelLabel: '稍后' })) window.location.reload(); }, 1500);
@@ -1306,7 +1331,7 @@
     }
 
     // 预览表格
-    s += `<div style="max-height:200px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px;margin-bottom:8px;">`;
+    s += `<div style="max-height:240px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px;margin-bottom:8px;">`;
     s += `<table style="width:100%;font-size:10px;border-collapse:collapse;">`;
     s += `<tr style="background:#fafafa;"><th style="padding:3px 4px;text-align:left;min-width:32px;">日期</th><th style="padding:3px 4px;">上午</th><th style="padding:3px 4px;">下午</th></tr>`;
     for (let d = 0; d < 7; d++) {
@@ -1364,7 +1389,7 @@
     s += `</div>`;
 
     // 预览表格
-    s += `<div style="max-height:220px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px;margin-bottom:8px;">`;
+    s += `<div style="max-height:240px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px;margin-bottom:8px;">`;
     s += `<table style="width:100%;font-size:10px;border-collapse:collapse;">`;
     s += `<tr style="background:#fafafa;"><th style="padding:3px 4px;text-align:center;width:28px;">#</th><th style="padding:3px 4px;">值班日</th><th style="padding:3px 4px;">匹配医生</th></tr>`;
     for (let i = 0; i < 8; i++) {
@@ -1429,8 +1454,9 @@
     h += `<div class="sh-btn-group" style="margin-top:8px;"><button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="resetDutyOrder"><span class="material-icons">refresh</span> 重置默认顺序</button><label style="font-size:10px;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="sh-cancel-zb"> 假期前一天取消中班</label></div>`;
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="runAutoDuty" style="margin-top:6px;padding:8px 16px;font-size:13px;"><span class="material-icons">manage_history</span> 执行自动排班</button>`;
     h += `<button class="sh-btn-action sh-btn-danger sh-btn-block" data-action="clearDuty" style="margin-top:4px; font-size: 13px;"><span class="material-icons">delete</span> 清空值班安排</button>`;
-    if (flags.length) h += `<div class="sh-info-bar warn" style="margin-top:8px;"><span class="material-icons">warning</span> 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
-    else h += `<div class="sh-info-bar success" style="margin-top:8px;"><span class="material-icons">check_circle</span> 暂无冲突</div>`;
+    if (flags.length) {
+      h += `<div class="sh-info-bar warn" style="margin-top:8px;"><span class="material-icons">warning</span> 检测到 <b>${flags.length}</b> 个安排冲突，请前往下一步处理。</div>`;
+    } else h += `<div class="sh-info-bar success" style="margin-top:8px;"><span class="material-icons">check_circle</span> 暂无冲突</div>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="3"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="5">下一步 <span class="material-icons">arrow_forward</span> <small>调整确认</small></button></div>`;
     body.innerHTML = h;
     const cb = document.getElementById('sh-cancel-zb'); if (cb) { cb.checked = state.cancelPreHolidayZhongban; cb.addEventListener('change', function () { state.cancelPreHolidayZhongban = this.checked; }); }
@@ -2278,7 +2304,7 @@
   function batchClearSpecial(did) { const chk = [...document.querySelectorAll(`.sh-special-chk[data-doc="${did}"]:checked`)]; if (!chk.length) { showToast('请勾选时段', 'warn'); return; } if (!state.special) state.special = {}; if (!state.special[did]) state.special[did] = {}; chk.forEach(cb => { const di = +cb.dataset.day, sl = cb.dataset.slot; if (!state.special[did][di]) state.special[did][di] = { am: null, pm: null }; state.special[did][di][sl] = null; }); renderSpecialDocForm(); syncStateToBackground(); applyToPageTable(); showToast(`已清除 ×${chk.length}`, 'success'); }
   function updateDutyOrder(i, did) { if (!state.dutyOrder) state.dutyOrder = []; while (state.dutyOrder.length < 8) state.dutyOrder.push(''); state.dutyOrder[i] = did || ''; renderPanel(); syncStateToBackground(); }
   function resetDutyOrder() { state.dutyOrder = A.buildDefaultDutyOrder(state.doctors); renderPanel(); }
-  async function runAutoDuty() { const f = (state.dutyOrder || []).filter(id => id && getDoctor(id)).length; if (!f) { showToast('请先设置值班序列', 'warn'); return; } if (!(await showModal({ title: '自动排班', message: '执行自动排班？已有安排不会被覆盖。', icon: 'manage_history' }))) return; const r = A.computeAutoDuty(state); state.dutyAssigned = r.dutyAssigned; state.baiban1Flags = r.baiban1Flags; renderPanel(); syncStateToBackground(); const c = state.baiban1Flags.filter(fl => fl.isConflict).length; showToast(c ? `排班完成！${c}个冲突需处理` : '排班完成，无冲突！', c ? 'warn' : 'success'); }
+  async function runAutoDuty() { const f = (state.dutyOrder || []).filter(id => id && getDoctor(id)).length; if (!f) { showToast('请先设置值班序列', 'warn'); return; } if (!(await showModal({ title: '自动排班', message: '执行自动排班？已有安排不会被覆盖。', icon: 'manage_history' }))) return; const r = A.computeAutoDuty(state); state.dutyAssigned = r.dutyAssigned; state.baiban1Flags = r.baiban1Flags; renderPanel(); syncStateToBackground(); const c = state.baiban1Flags.length; showToast(c ? `排班完成！${c}个冲突需处理` : '排班完成，无冲突！', c ? 'warn' : 'success'); }
   async function clearDuty() { if (!(await showModal({ title: '清空值班', message: '清空所有值班安排？', icon: 'delete' }))) return; state.dutyAssigned = {}; state.baiban1Flags = []; renderPanel(); }
   async function quickBaiban1(di, sl) { const cand = A.getBaiban1Candidates(state, di, sl); if (!cand.length) { showToast('无可用医生', 'warn'); return; } const choice = await showModal({ title: '分配白班1', message: `为 ${A.DAYS[di]}${A.SLOT_LABELS[sl]} 选择白班1医生：`, icon: 'personal_injury', type: 'select', selectOptions: cand.map((d, i) => ({ value: String(i), label: `${i + 1}. ${d.name}（#${d.number}）` })), okLabel: '确定', cancelLabel: '取消' }); if (choice === null) return; const idx = +choice; const doc = cand[idx]; if (!state.dutyAssigned) state.dutyAssigned = {}; if (!state.dutyAssigned[doc.id]) state.dutyAssigned[doc.id] = {}; if (!state.dutyAssigned[doc.id][di]) state.dutyAssigned[doc.id][di] = { am: null, pm: null }; state.dutyAssigned[doc.id][di][sl] = '白班1'; state.baiban1Flags = A.resolveConflict(state.baiban1Flags, di, sl, doc.id, doc.name); renderPanel(); syncStateToBackground(); }
   function fillEmpty() { const r = A.computeFillEmpty(state); state.dutyAssigned = r.dutyAssigned; renderPanel(); syncStateToBackground(); showToast(`已填补 ${r.count} 个空缺`, 'success'); }
