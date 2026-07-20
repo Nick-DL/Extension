@@ -191,6 +191,7 @@
     document.getElementById('sh-quick-entry').classList.remove('hidden');
     restoreFetch = ScheduleAPI.interceptScheduleAPI();
     window.addEventListener('scheduling-api-blocked', () => showToast('主页面排班修改已被拦截，请通过辅助面板操作', 'warn'));
+    blockPageWeekPicker();
     detectWeekInfo();
     refreshAllData().then(() => {
       console.log('[排班辅助] 数据加载完成, 医生' + state.doctors.length + '人');
@@ -213,6 +214,7 @@
     togglePanel(false); document.getElementById('sh-quick-entry').classList.add('hidden');
     if (restoreFetch) { restoreFetch(); restoreFetch = null; }
     removeClassColorBars(); clearPageTableCells(); clearClassBadgeColors(); teardownTableWatcher();
+    unblockPageWeekPicker();
     showToast('排班辅助插件已关闭', 'info');
   }
 
@@ -319,8 +321,7 @@
         console.log('[排班辅助] 班型提取路径:', Array.isArray(cr.data) ? 'data直接是数组' : cr.data.rows ? 'data.rows' : 'data.list/空');
         classMap = {}; classIdMap = {};
         if (cls.length > 0) {
-          console.log('[排班辅助] 第一条班型全部字段:', JSON.stringify(cls[0]));
-          console.log('[排班辅助] 班型字段名:', Object.keys(cls[0]).join(', '));
+          // 班型字段名（调试用，已移除冗余日志）
         }
         cls.forEach(c => { const n = c.className || c.name || ''; const id = c.id || c.classId || ''; if (n && id) { classMap[n] = String(id); classIdMap[String(id)] = n; } });
         console.log('[排班辅助] 加载班型:', Object.keys(classMap).length, '种, 前5个:', JSON.stringify(Object.keys(classMap).slice(0, 5)));
@@ -352,21 +353,7 @@
       if (state.doctors.length) {
         const empIds = state.doctors.map(d => d.id);
         const sr = await ScheduleAPI.fetchEmpSchedules({ empIds: empIds, from: weekInfo.monday, to: getSunday(weekInfo.monday) });
-        console.log('[排班辅助] empSchedules 原始响应类型:', typeof sr.data, sr.data && !Array.isArray(sr.data) ? '(对象,keys=' + Object.keys(sr.data).join(',') + ')' : '');
-        // ---------- 输出周一所有医生的排班原始数据 ----------
-        if (!sr.error && sr.data) {
-          var scheds = Array.isArray(sr.data) ? sr.data : (sr.data.employees || sr.data.data || sr.data.rows || sr.data.list || []);
-          var monDate = weekInfo.monday;
-          var mondayScheds = scheds.filter(function (r) {
-            var wd = (r.workDate || r.date || '').slice(0, 10);
-            return wd === monDate;
-          });
-          console.log('[排班辅助] 📅 周一(' + monDate + ') 原始排班数据 (' + mondayScheds.length + '条):');
-          mondayScheds.forEach(function (r, i) {
-            console.log('  [' + (i + 1) + ']', JSON.parse(JSON.stringify(r)));
-          });
-        }
-        // ----------------------------------------------------
+        // ---------- 周一排班数据（调试日志已移除） ----------
         if (!sr.error && sr.data) {
           parseSchedulesFromAPI(sr.data);
           console.log('[排班辅助] 加载排班: 门诊' + Object.values(state.outpatientGeneral).filter(g => g.am || g.pm).length +
@@ -386,30 +373,7 @@
   }
 
   function parseSchedulesFromAPI(data) {
-    console.log('[排班辅助] parseSchedulesFromAPI: 输入数据类型=' + (Array.isArray(data) ? 'array' : typeof data) +
-      ', keys=' + (data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).join(',') : 'N/A'));
-
     const scheds = Array.isArray(data) ? data : (data.employees || data.data || data.rows || data.list || []);
-    console.log('[排班辅助] scheds路径: ' + (Array.isArray(data) ? 'data直接是数组' : data.employees ? 'data.employees' : data.data ? 'data.data' : data.rows ? 'data.rows' : 'data.list/空'));
-    console.log('[排班辅助] 排班原始记录数:', scheds.length, '| classIdMap大小:', Object.keys(classIdMap).length);
-
-    if (scheds.length > 0) {
-      console.log('[排班辅助] 第一条排班全部字段:', JSON.stringify(scheds[0]));
-      // 打印前3条的关键字段
-      for (var si = 0; si < Math.min(3, scheds.length); si++) {
-        var sr = scheds[si];
-        console.log('[排班辅助] 排班#' + si + ' 关键字段:', JSON.stringify({
-          empId: sr.empId,
-          workDate: sr.workDate,
-          segment: sr.segment,
-          id: sr.id,
-          name: sr.name,
-          classId: sr.classId,
-          className: sr.className,
-          scheduleClassId: sr.scheduleClassId
-        }));
-      }
-    }
 
     state.outpatientGeneral = {}; state.dutyAssigned = {}; state.special = {};
     state.outpatientSimple = []; state.outpatientGaoxin = []; state.outpatientZitong = [];
@@ -883,6 +847,54 @@
     }, 500);
   }
 
+  // ==================== 阻止页面周选择器点击 ====================
+
+  var _weekPickerBlockHandler = null;
+
+  /**
+   * 在 document 捕获阶段拦截 Ant Design 周选择器中的周行点击。
+   * 用户仍可打开 picker 查看日历，但点击某一行切换周数会被阻止。
+   * 同时监听 mousedown 和 click（React 17+ 将合成事件挂载到 root 容器而非 document，
+   * 必须阻止原生 click 才能阻止 React 的合成 onClick）。
+   */
+  function blockPageWeekPicker() {
+    if (_weekPickerBlockHandler) return; // 已注册
+
+    var _toastShownThisClick = false;
+
+    _weekPickerBlockHandler = function (e) {
+      // 检查点击目标是否在周选择器的行内
+      var weekRow = e.target.closest('.ant-picker-week-panel-row');
+      if (!weekRow) return;
+
+      // 阻止事件继续传播（同时阻止原生事件和 React 合成事件）
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      e.preventDefault();
+
+      // 同一轮 mousedown→click 只弹一次 toast
+      if (!_toastShownThisClick) {
+        _toastShownThisClick = true;
+        showToast('请在插件内设置工作周数', 'warn');
+        setTimeout(function () { _toastShownThisClick = false; }, 500);
+      }
+    };
+
+    document.addEventListener('mousedown', _weekPickerBlockHandler, true);
+    document.addEventListener('click', _weekPickerBlockHandler, true);
+    console.log('[排班辅助] 🚫 页面周选择器点击已拦截');
+  }
+
+  /** 取消阻止页面周选择器点击 */
+  function unblockPageWeekPicker() {
+    if (_weekPickerBlockHandler) {
+      document.removeEventListener('mousedown', _weekPickerBlockHandler, true);
+      document.removeEventListener('click', _weekPickerBlockHandler, true);
+      _weekPickerBlockHandler = null;
+      console.log('[排班辅助] ✅ 页面周选择器拦截已解除');
+    }
+  }
+
   /** 启动所有主动监听 */
   function setupTableWatcher() {
     // ---- MutationObserver：监听表格结构变化（切换周数 / 开关两端排班都会重渲染tbody） ----
@@ -909,11 +921,11 @@
       console.log('[排班辅助] 👁️ 表格变化监听已启动（切换周数 / 两端排班）');
     }
 
-    // ---- 监听"两端排班"复选框（兜底：某些情况下 MutationObserver 可能不触发） ----
+    // ---- 监听"两段排班"复选框（兜底：某些情况下 MutationObserver 可能不触发） ----
     var allLabels = document.querySelectorAll('.ant-checkbox-wrapper');
     for (var j = 0; j < allLabels.length; j++) {
       var label = allLabels[j];
-      if (label.textContent.indexOf('两端排班') !== -1 || label.textContent.indexOf('两端') !== -1) {
+      if (label.textContent.indexOf('两段排班') !== -1 || label.textContent.indexOf('两段') !== -1) {
         label.addEventListener('click', function () {
           setTimeout(function () { _scheduleRefreshDisplay(); }, 350);
         });
@@ -1191,6 +1203,11 @@
   function renderS1(body) {
     const docs = state.doctors;
     let h = ``;
+    // ---- 两段排班提示 ----
+    h += `<div class="sh-info-bar warn" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">`;
+    h += `<span style="font-size:18px;"><i class="material-icons">warning</i></span>`;
+    h += `<span style="flex:1;line-height:1.5;">请确认已开启页面顶部的<b>「两段排班」</b>模式，否则排班辅助插件无法正常工作！</span>`;
+    h += `</div>`;
     // 格式化周一日期
     const monParts = weekInfo.monday.split('-');
     const monLabel = `${parseInt(monParts[1])}月${parseInt(monParts[2])}日周一`;
@@ -1209,7 +1226,7 @@
     const nextWeekInfo = getWeekInfo(nextMonday);
     const nextMonParts = nextWeekInfo.monday.split('-');
     const nextMonLabel = `${parseInt(nextMonParts[1])}月${parseInt(nextMonParts[2])}日周一`;
-    h += `<span style="font-size:11px;color:#666;">跳转至 <span style="font-weight:600;color:#333;">第${nextWeekInfo.week}周</span> <span style="font-size:10px;color:#888;">· ${nextMonLabel}</span></span>`;
+    h += `<span id="sh-week-preview-label" style="font-size:11px;color:#666;">跳转至 <span id="sh-week-preview-num" style="font-weight:600;color:#333;">第${nextWeekInfo.week}周</span> <span id="sh-week-preview-date" style="font-size:10px;color:#888;">· ${nextMonLabel}</span></span>`;
     h += `<span style="display:flex;align-items:center;gap:4px;">`;
     h += `<input type="number" id="sh-week-num" value="${nextWeekInfo.week}" min="1" max="53" style="width:44px;padding:5px 6px;text-align:center;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;" title="输入周数">`;
     h += `<button class="sh-btn-action sh-btn-primary" data-action="confirmWeek" style="padding:5px 16px;font-size:13px;font-weight:600;">GO</button>`;
@@ -1252,6 +1269,25 @@
     h += `</div>`;
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="goToStep" data-step="2" style="margin-top:6px;padding:8px 16px;font-size:13px;">下一步 <span class="material-icons">arrow_forward</span> <small>门诊安排</small></button>`;
     body.innerHTML = h;
+    // 绑定周数输入框的实时预览
+    const weekInput = document.getElementById('sh-week-num');
+    if (weekInput) {
+      weekInput.addEventListener('input', function () {
+        const val = parseInt(this.value, 10);
+        const previewNum = document.getElementById('sh-week-preview-num');
+        const previewDate = document.getElementById('sh-week-preview-date');
+        if (!previewNum || !previewDate) return;
+        if (isNaN(val) || val < 1 || val > 53) {
+          previewNum.textContent = '第?周';
+          previewDate.textContent = '· ?月?日周一';
+        } else {
+          const monDate = getMondayOfISOWeek(weekInfo.year, val);
+          const parts = monDate.split('-');
+          previewNum.textContent = '第' + val + '周';
+          previewDate.textContent = '· ' + parseInt(parts[1], 10) + '月' + parseInt(parts[2], 10) + '日周一';
+        }
+      });
+    }
   }
 
   // ===== S2: 门诊 =====
@@ -1295,7 +1331,7 @@
   // ===== 上周门诊导入预览渲染 =====
   function renderPrevWeekOutpatientSection() {
     let s = `<div class="sh-divider"></div>`;
-    s += `<div class="sh-subtitle" style="color:#006A69;"><span class="material-icons">file_download</span> 从上周导入门诊</div>`;
+    s += `<div class="sh-subtitle" style="color:#006A69;"><span class="material-icons">file_download</span> 从上一周导入门诊</div>`;
 
     if (!prevWeekOutpatientLoaded || !prevWeekOutpatientPreview) {
       const prevMonday = new Date(weekInfo.monday);
@@ -1363,7 +1399,7 @@
   // ===== 上周值班顺序导入预览渲染 =====
   function renderPrevWeekDutySection() {
     let s = `<div class="sh-divider"></div>`;
-    s += `<div class="sh-subtitle" style="color:#006A69;"><span class="material-icons">file_download</span> 从上周导入值班顺序</div>`;
+    s += `<div class="sh-subtitle" style="color:#006A69;"><span class="material-icons">file_download</span> 从上一周导入值班顺序</div>`;
 
     if (!prevWeekDutyOrderPreview) {
       const prevMonday = new Date(weekInfo.monday);
