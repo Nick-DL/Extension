@@ -22,6 +22,9 @@
   color: #333;
   user-select: none;
   transition: opacity 0.2s, transform 0.2s;
+  /* 关键优化：将面板从主页面布局/绘制树中完全隔离，
+     面板内部任何尺寸变化都不会触发主页面重排或滚动条闪烁 */
+  contain: layout style paint;
 }
 
 #scheduling-helper-panel.visible {
@@ -51,6 +54,43 @@
   justify-content: center;
   padding: 0;
   height: 100%;
+}
+
+/* ========== 面板高度调整手柄（下边缘） ========== */
+.sh-resize-handle-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 10;
+  border-radius: 0 0 12px 12px;
+  transition: background 0.2s;
+}
+.sh-resize-handle-bottom:hover,
+.sh-resize-handle-bottom.resizing {
+  background: rgba(0, 106, 105, 0.12);
+}
+/* 最小化时隐藏手柄 */
+#scheduling-helper-panel.minimized .sh-resize-handle-bottom {
+  display: none;
+}
+
+/* 拖拽调整高度期间：禁用过渡、强制GPU合成层、完全隔离布局，
+   从根源消除主页面滚动条闪烁 */
+#scheduling-helper-panel.sh-resizing {
+  transition: none;
+  /* 强制提升到独立GPU合成层，面板变化在GPU端完成，完全不触发主页面重绘 */
+  transform: translateZ(0);
+  will-change: max-height;
+  /* contain: strict 等于 layout + style + paint + size，
+     但 size containment 会阻止面板跟随 maxHeight 变化，故仅用 layout style paint */
+  contain: layout style paint;
+}
+/* resize 期间冻结内部滚动条，避免 scrollbar 显隐触发连锁重绘 */
+#scheduling-helper-panel.sh-resizing .sh-panel-body {
+  overflow-y: hidden !important;
 }
 
 /* ========== 标题栏（可拖拽） ========== */
@@ -153,7 +193,7 @@
 
 /* ========== 面板内容区 ========== */
 .sh-panel-body {
-  flex: 1;
+  flex: 1 1 auto;
   overflow-y: auto;
   padding: 12px 14px;
 }

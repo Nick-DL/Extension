@@ -188,6 +188,8 @@
 
   function onEnabled() {
     showToast('排班辅助插件已启用', 'success');
+    // 自动开启"两段排班"模式（插件逻辑依赖此模式）
+    ensureTwoSegmentMode();
     document.getElementById('sh-quick-entry').classList.remove('hidden');
     restoreFetch = ScheduleAPI.interceptScheduleAPI();
     window.addEventListener('scheduling-api-blocked', () => showToast('主页面排班修改已被拦截，请通过辅助面板操作', 'warn'));
@@ -682,6 +684,334 @@
     return updatedCount;
   }
 
+  // ==================== 页面→插件 数据同步 ====================
+
+  /** 防抖标记：避免短时间内重复同步 */
+  var _syncFromPageTimer = null;
+  var _syncingFromPage = false;
+
+  /**
+   * 从页面表格同步用户手动修改的数据回 state
+   *
+   * 扫描 .ant-table-tbody 中每一行的每个班型格，
+   * 与当前 state 对比，将差异合并回 state。
+   *
+   * 特殊处理：
+   * - 总院门诊重复 → 归入简易门诊
+   * - 白班1 → 自动消除 baiban1Flags 冲突标记
+   * - 其他班型 → 按类别写入对应字段
+   *
+   * @returns {{ syncedCount: number, details: string[] }}
+   */
+  function syncFromPageTable() {
+    if (_syncingFromPage) return { syncedCount: 0, details: ['正在同步中，跳过'] };
+    _syncingFromPage = true;
+
+    try {
+      var tbody = document.querySelector('.ant-table-tbody');
+      if (!tbody) return { syncedCount: 0, details: ['未找到排班表格'] };
+
+      var rows = tbody.querySelectorAll('tr.ant-table-row');
+      if (!rows.length) return { syncedCount: 0, details: ['表格无数据行'] };
+
+      // 重置空白类名缓存（页面可能刷新过）
+      _noClassClsCache = null;
+
+      // 构建 工号 → { cells } 映射
+      var rowMap = {};
+      var cellsPerDay = 1;
+      for (var ri = 0; ri < rows.length; ri++) {
+        var row = rows[ri];
+        var cells = row.querySelectorAll('td');
+        if (cells.length < 15) continue;
+        var empNumber = cells[7].textContent.trim();
+        if (empNumber) rowMap[empNumber] = cells;
+        if (cellsPerDay === 1 && cells.length >= 24) cellsPerDay = 2;
+      }
+
+      // 工号 → doctor
+      var numToDoc = {};
+      for (var di = 0; di < state.doctors.length; di++) {
+        var doc = state.doctors[di];
+        numToDoc[String(doc.number)] = doc;
+      }
+
+      var syncedCount = 0;
+      var details = [];
+
+      // 收集本次同步中所有页面上的 总院门诊，用于冲突判断
+      // pageGeneralMap: { dayIdx: { am: [doctorId, ...], pm: [doctorId, ...] } }
+      var pageGeneralMap = {};
+      for (var d = 0; d < 7; d++) { pageGeneralMap[d] = { am: [], pm: [] }; }
+
+      // 第一遍：收集所有页面上的 总院门诊
+      for (var empNum in rowMap) {
+        var cells = rowMap[empNum];
+        var doc = numToDoc[empNum];
+        if (!doc) continue;
+
+        for (var d = 0; d < 7; d++) {
+          var slots = _readPageSlots(cells, d, cellsPerDay);
+          for (var s = 0; s < slots.length; s++) {
+            var slotKey = slots[s].slot;
+            var pageType = slots[s].type;
+            if (pageType === '总院门诊') {
+              pageGeneralMap[d][slotKey].push(doc.id);
+            }
+          }
+        }
+      }
+
+      // 第二遍：实际同步
+      for (var empNum2 in rowMap) {
+        var cells2 = rowMap[empNum2];
+        var doc2 = numToDoc[empNum2];
+        if (!doc2) continue;
+
+        for (var d2 = 0; d2 < 7; d2++) {
+          var slots2 = _readPageSlots(cells2, d2, cellsPerDay);
+          for (var s2 = 0; s2 < slots2.length; s2++) {
+            var slotKey2 = slots2[s2].slot;
+            var pageType2 = slots2[s2].type;
+            if (!pageType2) continue;
+
+            var result = _syncSingleSlot(doc2, d2, slotKey2, pageType2, pageGeneralMap);
+            if (result.changed) { syncedCount++; details.push(result.detail); }
+          }
+        }
+      }
+
+      if (syncedCount > 0) {
+        syncStateToBackground();
+        var detailPreview = details.slice(0, 10).join('; ');
+        if (details.length > 10) detailPreview += ' ...等' + details.length + '项';
+        console.log('[排班辅助] 🔄 页面同步: ' + syncedCount + ' 项更改 — ' + detailPreview);
+
+        // 如果浮窗面板可见，立即刷新当前步骤的显示（如 S2 门诊列表）
+        var panel = document.getElementById('scheduling-helper-panel');
+        if (panel && panel.classList.contains('visible')) {
+          renderPanel();
+        }
+      }
+
+      return { syncedCount: syncedCount, details: details };
+    } finally {
+      _syncingFromPage = false;
+    }
+  }
+
+  /**
+   * 从页面单元格读取每天、每时段的班型文本
+   * @param {NodeList} cells - 表格行中的所有 td
+   * @param {number} dayIdx - 0-6
+   * @param {number} cellsPerDay - 1 或 2
+   * @returns {Array<{slot: string, type: string|null}>}
+   */
+  function _readPageSlots(cells, dayIdx, cellsPerDay) {
+    var results = [];
+
+    if (cellsPerDay === 2) {
+      // 两端排班：每天两列
+      var amCell = cells[8 + dayIdx * 2];
+      var pmCell = cells[8 + dayIdx * 2 + 1];
+      var amType = null, pmType = null;
+      if (amCell) {
+        var amDiv = amCell.querySelector('[class*="tooltip"] > div');
+        if (amDiv) {
+          amType = amDiv.textContent.trim();
+          if (amType === '\u00A0' || !amType) amType = null;
+        }
+      }
+      if (pmCell) {
+        var pmDiv = pmCell.querySelector('[class*="tooltip"] > div');
+        if (pmDiv) {
+          pmType = pmDiv.textContent.trim();
+          if (pmType === '\u00A0' || !pmType) pmType = null;
+        }
+      }
+      results.push({ slot: 'am', type: amType });
+      results.push({ slot: 'pm', type: pmType });
+    } else {
+      // 单格模式：每天一列
+      var cell = cells[8 + dayIdx];
+      if (!cell) {
+        results.push({ slot: 'am', type: null }, { slot: 'pm', type: null });
+        return results;
+      }
+      var classDivs = cell.querySelectorAll('[class*="tooltip"] > div');
+      if (classDivs.length === 0) {
+        results.push({ slot: 'am', type: null }, { slot: 'pm', type: null });
+      } else if (classDivs.length === 1) {
+        var fullText = classDivs[0].textContent.trim();
+        if (fullText === '\u00A0' || !fullText) fullText = null;
+        results.push({ slot: 'am', type: fullText }, { slot: 'pm', type: fullText });
+      } else {
+        var amT = classDivs[0].textContent.trim();
+        var pmT = classDivs[1].textContent.trim();
+        if (amT === '\u00A0' || !amT) amT = null;
+        if (pmT === '\u00A0' || !pmT) pmT = null;
+        results.push({ slot: 'am', type: amT }, { slot: 'pm', type: pmT });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 将单个 (医生, 天, 时段, 班型) 同步到 state
+   *
+   * @param {object} doc - doctor 对象
+   * @param {number} dayIdx
+   * @param {string} slot - 'am' | 'pm'
+   * @param {string} pageType - 页面上显示的班型文本
+   * @param {object} pageGeneralMap - 页面总院门诊收集 { dayIdx: { am: [docId...], pm: [docId...] } }
+   * @returns {{ changed: boolean, detail: string }}
+   */
+  function _syncSingleSlot(doc, dayIdx, slot, pageType, pageGeneralMap) {
+    var docId = doc.id;
+    var docName = doc.name;
+    var label = A.DAYS[dayIdx] + A.SLOT_LABELS[slot];
+
+    // 确保 state 子对象存在
+    if (!state.outpatientGeneral[dayIdx]) state.outpatientGeneral[dayIdx] = { am: null, pm: null };
+    if (!state.special[docId]) state.special[docId] = {};
+    if (!state.special[docId][dayIdx]) state.special[docId][dayIdx] = { am: null, pm: null };
+    if (!state.dutyAssigned[docId]) state.dutyAssigned[docId] = {};
+    if (!state.dutyAssigned[docId][dayIdx]) state.dutyAssigned[docId][dayIdx] = { am: null, pm: null };
+    if (!state.outpatientGaoxin) state.outpatientGaoxin = [];
+    if (!state.outpatientZitong) state.outpatientZitong = [];
+    if (!state.outpatientSimple) state.outpatientSimple = [];
+
+    // ─── 门诊类 ───
+    if (A.CLINIC_TYPES.indexOf(pageType) !== -1) {
+      if (pageType === '总院门诊') {
+        var genSlot = state.outpatientGeneral[dayIdx][slot];
+
+        // 当前医生已占据该时段 → 无需操作
+        if (genSlot === docId) {
+          return { changed: false, detail: '' };
+        }
+
+        // 该时段已被其他医生占据 → 归入简易门诊
+        if (genSlot && genSlot !== docId) {
+          var alreadyInSimple = state.outpatientSimple.some(function (a) {
+            return a.dayIdx === dayIdx && a.slot === slot && a.doctorId === docId;
+          });
+          if (!alreadyInSimple) {
+            state.outpatientSimple.push({ dayIdx: dayIdx, slot: slot, doctorId: docId });
+            state.dutyAssigned[docId][dayIdx][slot] = null;
+            return { changed: true, detail: docName + ' ' + label + ' 总院门诊→简易门诊（时段已被' + (getDoctor(genSlot) ? getDoctor(genSlot).name : genSlot) + '占据）' };
+          }
+          return { changed: false, detail: '' };
+        }
+
+        // 时段空闲 → 直接写入
+        // 但也检查：页面上是否同一时段有多个人标了总院门诊
+        var pageDoctors = pageGeneralMap[dayIdx][slot] || [];
+        var pageRank = pageDoctors.indexOf(docId);
+        if (pageRank > 0) {
+          // 不是页面上的第一个总院门诊 → 归入简易门诊
+          var alreadyInSimple2 = state.outpatientSimple.some(function (a) {
+            return a.dayIdx === dayIdx && a.slot === slot && a.doctorId === docId;
+          });
+          if (!alreadyInSimple2) {
+            state.outpatientSimple.push({ dayIdx: dayIdx, slot: slot, doctorId: docId });
+            state.dutyAssigned[docId][dayIdx][slot] = null;
+            return { changed: true, detail: docName + ' ' + label + ' 总院门诊→简易门诊（时段内第' + (pageRank + 1) + '位）' };
+          }
+          return { changed: false, detail: '' };
+        }
+
+        state.outpatientGeneral[dayIdx][slot] = docId;
+        state.dutyAssigned[docId][dayIdx][slot] = null;
+        return { changed: true, detail: docName + ' ' + label + ' 总院门诊 ✓' };
+      }
+
+      if (pageType === '高新门诊') {
+        var alreadyGx = state.outpatientGaoxin.some(function (a) {
+          return a.dayIdx === dayIdx && a.doctorId === docId;
+        });
+        if (!alreadyGx) {
+          state.outpatientGaoxin.push({ dayIdx: dayIdx, doctorId: docId });
+          state.dutyAssigned[docId][dayIdx][slot] = null;
+          return { changed: true, detail: docName + ' ' + label + ' 高新门诊 ✓' };
+        }
+        return { changed: false, detail: '' };
+      }
+
+      if (pageType === '梓潼门诊') {
+        var alreadyZt = state.outpatientZitong.some(function (a) {
+          return a.dayIdx === dayIdx && a.doctorId === docId;
+        });
+        if (!alreadyZt) {
+          state.outpatientZitong.push({ dayIdx: dayIdx, doctorId: docId });
+          state.dutyAssigned[docId][dayIdx][slot] = null;
+          return { changed: true, detail: docName + ' ' + label + ' 梓潼门诊 ✓' };
+        }
+        return { changed: false, detail: '' };
+      }
+    }
+
+    // ─── 特殊安排类 ───
+    if (A.SPECIAL_TYPES.indexOf(pageType) !== -1) {
+      var existingSpec = state.special[docId][dayIdx][slot];
+      if (existingSpec === pageType) {
+        return { changed: false, detail: '' };
+      }
+      state.special[docId][dayIdx][slot] = pageType;
+      // 特殊安排覆盖下，清除冲突的门诊和值班
+      if (state.outpatientGeneral[dayIdx][slot] === docId) {
+        state.outpatientGeneral[dayIdx][slot] = null;
+      }
+      state.dutyAssigned[docId][dayIdx][slot] = null;
+      return { changed: true, detail: docName + ' ' + label + ' ' + pageType + ' ✓' };
+    }
+
+    // ─── 值班/白班普/白班1/休 等 ───
+    var existingDuty = state.dutyAssigned[docId][dayIdx][slot];
+    if (existingDuty === pageType) {
+      return { changed: false, detail: '' };
+    }
+    state.dutyAssigned[docId][dayIdx][slot] = pageType;
+    // 清除该时段冲突的门诊（用户手动设置值班应覆盖门诊）
+    if (state.outpatientGeneral[dayIdx][slot] === docId) {
+      state.outpatientGeneral[dayIdx][slot] = null;
+    }
+
+    // 白班1：自动消除冲突标记
+    if (pageType === '白班1') {
+      if (state.baiban1Flags && state.baiban1Flags.length) {
+        var resolvedCount = 0;
+        state.baiban1Flags = state.baiban1Flags.filter(function (f) {
+          if (f.dayIdx === dayIdx && f.slot === slot && !f.resolvedBy) {
+            resolvedCount++;
+            return false;
+          }
+          return true;
+        });
+        if (resolvedCount > 0) {
+          return { changed: true, detail: docName + ' ' + label + ' 白班1 ✓（消除' + resolvedCount + '个冲突）' };
+        }
+      }
+      return { changed: true, detail: docName + ' ' + label + ' 白班1 ✓' };
+    }
+
+    return { changed: true, detail: docName + ' ' + label + ' ' + pageType + ' ✓' };
+  }
+
+  /**
+   * 防抖调度：延迟执行页面同步（避免高频触发）
+   * @param {number} [delay=800] - 延迟毫秒数
+   */
+  function _scheduleSyncFromPage(delay) {
+    if (!extEnabled) return;
+    if (_syncFromPageTimer) clearTimeout(_syncFromPageTimer);
+    _syncFromPageTimer = setTimeout(function () {
+      _syncFromPageTimer = null;
+      syncFromPageTable();
+    }, delay || 800);
+  }
+
   /** 探测 noClass___xxxx 空白类名 */
   function detectNoClass(sampleDiv) {
     const found = Array.from(sampleDiv.classList).find(function (c) { return c.indexOf('noClass') === 0 || c.indexOf('NoClass') === 0; });
@@ -908,6 +1238,7 @@
             for (var k = 0; k < m.addedNodes.length; k++) {
               if (m.addedNodes[k].nodeType === 1) {
                 _scheduleRefreshDisplay();
+                _scheduleSyncFromPage(1500);
                 return;
               }
             }
@@ -928,6 +1259,7 @@
       if (label.textContent.indexOf('两段排班') !== -1 || label.textContent.indexOf('两段') !== -1) {
         label.addEventListener('click', function () {
           setTimeout(function () { _scheduleRefreshDisplay(); }, 350);
+          setTimeout(function () { _scheduleSyncFromPage(2000); }, 800);
         });
         console.log('[排班辅助] 👁️ 两段排班开关监听已绑定');
         break;
@@ -938,12 +1270,19 @@
   function teardownTableWatcher() {
     if (_tableObserver) { _tableObserver.disconnect(); _tableObserver = null; }
     if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
+    if (_syncFromPageTimer) { clearTimeout(_syncFromPageTimer); _syncFromPageTimer = null; }
   }
 
   // ==================== 提交 ====================
   async function submitAllChanges() {
     if (!(await showModal({ title: '确认提交', message: '确定提交所有排班修改？\n插件将分两批提交：先提交上午的排班，再提交下午的排班。\n提交成功后请刷新页面查看。', icon: 'file_upload' }))) return;
     try {
+      // 提交前最后一次同步页面手动修改
+      var syncResult = syncFromPageTable();
+      if (syncResult.syncedCount > 0) {
+        showToast('已同步 ' + syncResult.syncedCount + ' 项页面手动修改', 'info');
+      }
+
       // 分别构建上午和下午的数据
       const bdAM = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday, 'am');
       const bdPM = ScheduleAPI.buildBatchData(state, classMap, locationId, weekInfo.monday, 'pm');
@@ -1009,6 +1348,7 @@
     p.innerHTML = `<div class="sh-panel-header" id="sh-panel-header"><span class="sh-title"><span class="material-icons">local_hospital</span> 排班辅助</span><div class="sh-actions"><button class="sh-btn" id="sh-btn-minimize" title="最小化">−</button><button class="sh-btn" id="sh-btn-close" title="关闭">✕</button></div></div><div class="sh-steps-bar" id="sh-steps-bar"><div class="sh-step-item active" data-action="goToStep" data-step="1"><span class="sh-step-num">1</span>人员</div><div class="sh-step-item" data-action="goToStep" data-step="2"><span class="sh-step-num">2</span>门诊</div><div class="sh-step-item" data-action="goToStep" data-step="3"><span class="sh-step-num">3</span>特殊</div><div class="sh-step-item" data-action="goToStep" data-step="4"><span class="sh-step-num">4</span>值班</div><div class="sh-step-item" data-action="goToStep" data-step="5"><span class="sh-step-num">5</span>确认</div></div><div class="sh-panel-body" id="sh-panel-body"></div>`;
     document.body.appendChild(p);
     makeDraggable(p.querySelector('.sh-panel-header'), p);
+    makeHeightResizable(p);
     document.getElementById('sh-btn-minimize').addEventListener('click', toggleMinimize);
     document.getElementById('sh-btn-close').addEventListener('click', () => togglePanel(false));
     // 统一事件代理（避免 CSP 内联事件违规）
@@ -1181,6 +1521,68 @@
         if (!moved && isMinimized) toggleMinimize();
       };
       document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+    });
+  }
+
+  /**
+   * 面板高度调整（拖拽下边缘手柄）
+   * 拖拽设定的是"最大高度"：面板高度始终按内容自适应，
+   * 内容不足时不留白，内容超出上限时内部滚动。
+   * 最小高度 200px，最大高度 视口高度 - 100px
+   */
+  function makeHeightResizable(panel) {
+    // 动态创建下边缘手柄（放在面板内部末尾，方便 CSS 定位）
+    const handle = document.createElement('div');
+    handle.className = 'sh-resize-handle-bottom';
+    handle.id = 'sh-resize-handle-bottom';
+    handle.title = '拖拽调整高度';
+    panel.appendChild(handle);
+
+    const MIN_HEIGHT = 200;
+    let resizing = false, startY, startHeight, latestY, rafId = null;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      resizing = true;
+      startY = latestY = e.clientY;
+      startHeight = panel.offsetHeight;
+      handle.classList.add('resizing');
+      panel.classList.add('sh-resizing');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ns-resize';
+      // 将主页面强制提升到独立GPU合成层，缓存整个页面，
+      // 防止面板尺寸变化触发主页面图层重合成（滚动条闪烁的根因）
+      document.documentElement.style.transform = 'translateZ(0)';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!resizing) return;
+      latestY = e.clientY; // 始终记录最新坐标，避免使用滞后一帧的旧位置
+      if (rafId) return; // 上一帧还未执行，跳过
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const deltaY = latestY - startY;
+        const maxH = window.innerHeight - 100;
+        let newMaxHeight = startHeight + deltaY;
+        newMaxHeight = Math.max(MIN_HEIGHT, Math.min(maxH, newMaxHeight));
+        // 只设上限而非固定高度，内容不足时面板自动收缩
+        panel.style.maxHeight = newMaxHeight + 'px';
+      });
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!resizing) return;
+      resizing = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      handle.classList.remove('resizing');
+      panel.classList.remove('sh-resizing');
+      const b = document.getElementById('sh-panel-body');
+      if (b) b.style.overflow = '';
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      // 恢复主页面为默认渲染模式
+      document.documentElement.style.transform = '';
     });
   }
 
@@ -1500,6 +1902,9 @@
 
   // ===== S5: 确认 =====
   function renderS5(body) {
+    // 先同步页面手动修改（如手动分配的白班1、手动添加的周末门诊等）
+    syncFromPageTable();
+
     const flags = state.baiban1Flags || [], trainees = state.doctors.filter(d => d.type === 'trainee');
     let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 点击下方"分配白1"按钮，可快速安排白班1！</div>`;
 
@@ -1693,12 +2098,38 @@
   }
 
   /**
+   * 确保"两段排班"复选框已开启（插件逻辑依赖两段排班模式）
+   */
+  function ensureTwoSegmentMode() {
+    var allLabels = document.querySelectorAll('.ant-checkbox-wrapper');
+    for (var i = 0; i < allLabels.length; i++) {
+      var label = allLabels[i];
+      if (label.textContent.indexOf('两段排班') !== -1 || label.textContent.indexOf('两段') !== -1) {
+        var isChecked = label.classList.contains('ant-checkbox-wrapper-checked');
+        if (!isChecked) {
+          console.log('[排班辅助] 🔧 自动开启"两段排班"模式');
+          var input = label.querySelector('.ant-checkbox-input');
+          if (input) {
+            input.click();
+          } else {
+            label.click();
+          }
+        }
+        return;
+      }
+    }
+  }
+
+  /**
    * 核心：切换到目标工作周
    * 优先通过 bridge 调用 React fiber onChange（极快），失败则回退到DOM操作
    * @param {number} targetWeek - 目标ISO周数
    * @returns {Promise<{year: number, week: number, monday: string}>}
    */
   async function navigatePickerToWeek(targetWeek) {
+    // ---- 确保"两段排班"已开启（插件逻辑依赖此模式） ----
+    ensureTwoSegmentMode();
+
     // 【快速路径】通过 bridge 在主世界调用 React fiber onChange
     try {
       var fiberResult = await ScheduleAPI.switchWeek(targetWeek);
