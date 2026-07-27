@@ -589,17 +589,17 @@
 
     // 构建 工号(院内工号) → row 映射
     const rowMap = {};
-    let cellsPerDay = 1; // 1=单格模式, 2=两端排班模式
+    let cellsPerDay = 1; // 1=单格模式, 2=两段排班模式
     for (const row of rows) {
       const cells = row.querySelectorAll('td');
       if (cells.length < 15) continue;
       const empNumber = cells[7].textContent.trim();
       if (empNumber) rowMap[empNumber] = { row, cells };
-      // 检测模式：两端排班每天两列（班次1+班次2），单格模式每天一列
+      // 检测模式：两段排班每天两列（班次1+班次2），单格模式每天一列
       if (cellsPerDay === 1 && cells.length >= 24) cellsPerDay = 2;
     }
 
-    console.log('[排班辅助] 表格模式: ' + (cellsPerDay === 2 ? '两端排班(每天2列)' : '单格(每天1列)'));
+    console.log('[排班辅助] 表格模式: ' + (cellsPerDay === 2 ? '两段排班(每天2列)' : '单格(每天1列)'));
 
     // 根据 styleOnly 选择策略：true=只改样式不改文本，false=改文本+样式
     function _apply(div, type) {
@@ -618,7 +618,7 @@
       const { cells } = entry;
       for (let d = 0; d < 7; d++) {
         if (cellsPerDay === 2) {
-          // ===== 两端排班模式：每天两列 =====
+          // ===== 两段排班模式：每天两列 =====
           const amCell = cells[8 + d * 2];      // 班次1 = 上午
           const pmCell = cells[8 + d * 2 + 1];   // 班次2 = 下午
           if (!amCell || !pmCell) continue;
@@ -897,7 +897,7 @@
 
   /** 启动所有主动监听 */
   function setupTableWatcher() {
-    // ---- MutationObserver：监听表格结构变化（切换周数 / 开关两端排班都会重渲染tbody） ----
+    // ---- MutationObserver：监听表格结构变化（切换周数 / 开关两段排班都会重渲染tbody） ----
     var tableContainer = document.querySelector('.ant-table-container');
     if (tableContainer && !_tableObserver) {
       _tableObserver = new MutationObserver(function (mutations) {
@@ -918,7 +918,7 @@
         childList: true,
         subtree: true
       });
-      console.log('[排班辅助] 👁️ 表格变化监听已启动（切换周数 / 两端排班）');
+      console.log('[排班辅助] 👁️ 表格变化监听已启动（切换周数 / 两段排班）');
     }
 
     // ---- 监听"两段排班"复选框（兜底：某些情况下 MutationObserver 可能不触发） ----
@@ -929,7 +929,7 @@
         label.addEventListener('click', function () {
           setTimeout(function () { _scheduleRefreshDisplay(); }, 350);
         });
-        console.log('[排班辅助] 👁️ 两端排班开关监听已绑定');
+        console.log('[排班辅助] 👁️ 两段排班开关监听已绑定');
         break;
       }
     }
