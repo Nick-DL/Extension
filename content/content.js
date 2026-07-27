@@ -858,6 +858,55 @@
   }
 
   /**
+   * 清除指定 (docId, dayIdx, slot) 在其它类别中的冲突数据
+   * 当用户在页面将某个格子从类别A改为类别B时，需要清除类别A中的旧数据
+   *
+   * @param {string} docId
+   * @param {number} dayIdx
+   * @param {string} slot - 'am' | 'pm'
+   * @param {string} keepCategory - 不清除的类别：'outpatient' | 'special' | 'duty'
+   */
+  function _clearSlotConflicts(docId, dayIdx, slot, keepCategory) {
+    // 清除门诊数据（outpatientGeneral / Gaoxin / Zitong / Simple）
+    if (keepCategory !== 'outpatient') {
+      if ((state.outpatientGeneral[dayIdx] || {})[slot] === docId) {
+        state.outpatientGeneral[dayIdx][slot] = null;
+      }
+      if (state.outpatientGaoxin) {
+        state.outpatientGaoxin = state.outpatientGaoxin.filter(function (a) {
+          return !(a.dayIdx === dayIdx && a.doctorId === docId);
+        });
+      }
+      if (state.outpatientZitong) {
+        state.outpatientZitong = state.outpatientZitong.filter(function (a) {
+          return !(a.dayIdx === dayIdx && a.doctorId === docId);
+        });
+      }
+      if (state.outpatientSimple) {
+        state.outpatientSimple = state.outpatientSimple.filter(function (a) {
+          return !(a.dayIdx === dayIdx && a.slot === slot && a.doctorId === docId);
+        });
+      }
+    }
+
+    // 清除特殊安排
+    if (keepCategory !== 'special') {
+      var spec = (state.special[docId] || {})[dayIdx];
+      if (spec && spec[slot]) {
+        state.special[docId][dayIdx][slot] = null;
+      }
+    }
+
+    // 清除值班数据
+    if (keepCategory !== 'duty') {
+      var duty = (state.dutyAssigned[docId] || {})[dayIdx];
+      if (duty && duty[slot]) {
+        state.dutyAssigned[docId][dayIdx][slot] = null;
+      }
+    }
+  }
+
+  /**
    * 将单个 (医生, 天, 时段, 班型) 同步到 state
    *
    * @param {object} doc - doctor 对象
@@ -899,7 +948,7 @@
           });
           if (!alreadyInSimple) {
             state.outpatientSimple.push({ dayIdx: dayIdx, slot: slot, doctorId: docId });
-            state.dutyAssigned[docId][dayIdx][slot] = null;
+            _clearSlotConflicts(docId, dayIdx, slot, 'outpatient');
             return { changed: true, detail: docName + ' ' + label + ' 总院门诊→简易门诊（时段已被' + (getDoctor(genSlot) ? getDoctor(genSlot).name : genSlot) + '占据）' };
           }
           return { changed: false, detail: '' };
@@ -916,14 +965,14 @@
           });
           if (!alreadyInSimple2) {
             state.outpatientSimple.push({ dayIdx: dayIdx, slot: slot, doctorId: docId });
-            state.dutyAssigned[docId][dayIdx][slot] = null;
+            _clearSlotConflicts(docId, dayIdx, slot, 'outpatient');
             return { changed: true, detail: docName + ' ' + label + ' 总院门诊→简易门诊（时段内第' + (pageRank + 1) + '位）' };
           }
           return { changed: false, detail: '' };
         }
 
         state.outpatientGeneral[dayIdx][slot] = docId;
-        state.dutyAssigned[docId][dayIdx][slot] = null;
+        _clearSlotConflicts(docId, dayIdx, slot, 'outpatient');
         return { changed: true, detail: docName + ' ' + label + ' 总院门诊 ✓' };
       }
 
@@ -933,7 +982,7 @@
         });
         if (!alreadyGx) {
           state.outpatientGaoxin.push({ dayIdx: dayIdx, doctorId: docId });
-          state.dutyAssigned[docId][dayIdx][slot] = null;
+          _clearSlotConflicts(docId, dayIdx, slot, 'outpatient');
           return { changed: true, detail: docName + ' ' + label + ' 高新门诊 ✓' };
         }
         return { changed: false, detail: '' };
@@ -945,7 +994,7 @@
         });
         if (!alreadyZt) {
           state.outpatientZitong.push({ dayIdx: dayIdx, doctorId: docId });
-          state.dutyAssigned[docId][dayIdx][slot] = null;
+          _clearSlotConflicts(docId, dayIdx, slot, 'outpatient');
           return { changed: true, detail: docName + ' ' + label + ' 梓潼门诊 ✓' };
         }
         return { changed: false, detail: '' };
@@ -959,11 +1008,7 @@
         return { changed: false, detail: '' };
       }
       state.special[docId][dayIdx][slot] = pageType;
-      // 特殊安排覆盖下，清除冲突的门诊和值班
-      if (state.outpatientGeneral[dayIdx][slot] === docId) {
-        state.outpatientGeneral[dayIdx][slot] = null;
-      }
-      state.dutyAssigned[docId][dayIdx][slot] = null;
+      _clearSlotConflicts(docId, dayIdx, slot, 'special');
       return { changed: true, detail: docName + ' ' + label + ' ' + pageType + ' ✓' };
     }
 
@@ -973,10 +1018,7 @@
       return { changed: false, detail: '' };
     }
     state.dutyAssigned[docId][dayIdx][slot] = pageType;
-    // 清除该时段冲突的门诊（用户手动设置值班应覆盖门诊）
-    if (state.outpatientGeneral[dayIdx][slot] === docId) {
-      state.outpatientGeneral[dayIdx][slot] = null;
-    }
+    _clearSlotConflicts(docId, dayIdx, slot, 'duty');
 
     // 白班1：自动消除冲突标记
     if (pageType === '白班1') {
