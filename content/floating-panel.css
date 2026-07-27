@@ -88,11 +88,6 @@
      但 size containment 会阻止面板跟随 maxHeight 变化，故仅用 layout style paint */
   contain: layout style paint;
 }
-/* resize 期间冻结内部滚动条，避免 scrollbar 显隐触发连锁重绘 */
-#scheduling-helper-panel.sh-resizing .sh-panel-body {
-  overflow-y: hidden !important;
-}
-
 /* ========== 标题栏（可拖拽） ========== */
 .sh-panel-header {
   display: flex;
