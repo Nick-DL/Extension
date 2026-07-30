@@ -33,6 +33,7 @@
   let prevWeekOutpatientPreview = null;  // { outpatientGeneral, outpatientGaoxin, outpatientZitong, conflicts:[] }
   let prevWeekOutpatientLoaded = false;
   let prevWeekDutyOrderPreview = null;   // { sourceMonday, order:[doctorId×8], details:[{dayIdx,dayLabel,doctorId,doctorName}], missingDays:[] }
+  let _twoSegmentBlockHandler = null;   // 禁止关闭"两段排班"的捕获事件处理器
 
   // ==================== 工具函数 ====================
   function getDoctor(id) { return A.getDoctor(state.doctors, id); }
@@ -157,28 +158,59 @@
     });
   }
 
+  // ==================== SPA 路由检测 ====================
+  /** 匹配排班页面的 URL 正则 */
+  var HOSPITAL_PAGE_RE = /10\.66\.66\.151\/app\/attendance\/schedules\/hospital/;
+
+  /** 根据当前 URL 判断是否在医院排班页面，动态启用/禁用插件 */
+  function checkPageAndToggle() {
+    var isHospitalPage = HOSPITAL_PAGE_RE.test(window.location.href);
+    if (isHospitalPage && !extEnabled) {
+      extEnabled = true;
+      onEnabled();
+      chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: true });
+    } else if (!isHospitalPage && extEnabled) {
+      extEnabled = false;
+      onDisabled();
+      chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: false });
+    }
+  }
+
   // ==================== 初始化 ====================
   function init() {
     for (let d = 0; d < 7; d++) state.outpatientGeneral[d] = { am: null, pm: null };
     injectPanel(); injectQuickEntry(); injectToastContainer();
     chrome.runtime.onMessage.addListener(handleMessage);
 
-    // 判断是否在医院排班页面：是则默认启用，否则查 background 状态
-    const isHospitalPage = /10\.66\.66\.151\/app\/attendance\/schedules\/hospital/.test(window.location.href);
-    if (isHospitalPage) {
-      extEnabled = true;
-      onEnabled();
-      chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: true });
-    } else {
-      chrome.runtime.sendMessage({ type: 'GET_STATE' }, (resp) => {
-        if (resp && resp.success && resp.data.enabled) { extEnabled = true; onEnabled(); }
-      });
+    // 首次检查当前页面
+    checkPageAndToggle();
+
+    // ---- SPA 路由监听（React Router 切换页面时不重载） ----
+    var _pushState = history.pushState;
+    var _replaceState = history.replaceState;
+    function onSPAUrlChange() {
+      // 用 setTimeout 延迟一帧，确保 React 组件已完成渲染
+      setTimeout(checkPageAndToggle, 0);
     }
+    history.pushState = function () {
+      _pushState.apply(this, arguments);
+      onSPAUrlChange();
+    };
+    history.replaceState = function () {
+      _replaceState.apply(this, arguments);
+      onSPAUrlChange();
+    };
+    window.addEventListener('popstate', onSPAUrlChange);
+    window.addEventListener('hashchange', onSPAUrlChange);
   }
 
   function handleMessage(message, sender, sendResponse) {
     switch (message.type) {
-      case 'TOGGLE_ENABLED': extEnabled = message.enabled; extEnabled ? onEnabled() : onDisabled(); break;
+      case 'TOGGLE_ENABLED':
+        if (message.enabled && !HOSPITAL_PAGE_RE.test(window.location.href)) {
+          showToast('请在排班页面中启用辅助插件', 'warn'); break;
+        }
+        extEnabled = message.enabled; extEnabled ? onEnabled() : onDisabled(); break;
       case 'OPEN_PANEL': extEnabled ? togglePanel(true) : showToast('请先在扩展弹窗中启用辅助插件', 'warn'); break;
       case 'REFRESH_DATA': refreshAllData().then(() => { showToast('数据已刷新', 'success'); renderPanel(); }); break;
       case 'RESTORE_DATA': restoreOriginalData(); break;
@@ -217,6 +249,7 @@
     if (restoreFetch) { restoreFetch(); restoreFetch = null; }
     removeClassColorBars(); clearPageTableCells(); clearClassBadgeColors(); teardownTableWatcher();
     unblockPageWeekPicker();
+    unblockTwoSegmentUncheck();
     showToast('排班辅助插件已关闭', 'info');
   }
 
@@ -1317,7 +1350,7 @@
 
   // ==================== 提交 ====================
   async function submitAllChanges() {
-    if (!(await showModal({ title: '确认提交', message: '确定提交所有排班修改？\n插件将分两批提交：先提交上午的排班，再提交下午的排班。\n提交成功后请刷新页面查看。', icon: 'file_upload' }))) return;
+    if (!(await showModal({ title: '确认提交', message: '确定提交所有排班修改？\n提交成功后请刷新页面查看。', icon: 'file_upload' }))) return;
     try {
       // 提交前最后一次同步页面手动修改
       var syncResult = syncFromPageTable();
@@ -1553,7 +1586,17 @@
         if (!dragging) return;
         const dx = ev.clientX - sx, dy = ev.clientY - sy;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-        if (moved) { target.style.left = (sl + dx) + 'px'; target.style.top = (st + dy) + 'px'; target.style.right = 'auto'; }
+        if (moved) {
+          let newLeft = sl + dx, newTop = st + dy;
+          // 边界约束：不超出视口
+          const panelW = target.offsetWidth, panelH = target.offsetHeight;
+          const vw = window.innerWidth, vh = window.innerHeight;
+          newLeft = Math.max(0, Math.min(newLeft, vw - panelW));
+          newTop = Math.max(0, Math.min(newTop, vh - panelH));
+          target.style.left = newLeft + 'px';
+          target.style.top = newTop + 'px';
+          target.style.right = 'auto';
+        }
       };
       const mu = () => {
         dragging = false;
@@ -1632,7 +1675,14 @@
   function togglePanel(show) { const p = document.getElementById('scheduling-helper-panel'); if (!p) return; panelVisible = show; if (show) { p.classList.add('visible'); if (isMinimized) toggleMinimize(); goToStep(state.currentStep); document.getElementById('sh-quick-entry').classList.add('hidden'); } else { p.classList.remove('visible'); if (extEnabled) document.getElementById('sh-quick-entry').classList.remove('hidden'); } }
   function toggleMinimize() { const p = document.getElementById('scheduling-helper-panel'), b = document.getElementById('sh-panel-body'), s = document.getElementById('sh-steps-bar'); if (!p) return; isMinimized = !isMinimized; if (isMinimized) { p.classList.add('minimized'); b.style.display = 'none'; s.style.display = 'none'; p.title = '打开浮窗'; document.getElementById('sh-quick-entry').classList.add('hidden'); } else { p.classList.remove('minimized'); b.style.display = ''; s.style.display = ''; p.title = ''; } }
 
-  function goToStep(n) { state.currentStep = n; renderStepsBar(); renderPanel(); }
+  function goToStep(n) {
+    state.currentStep = n;
+    renderStepsBar();
+    renderPanel();
+    // 切换步骤后平滑滚动到顶部
+    const body = document.getElementById('sh-panel-body');
+    if (body) body.scrollTo({ top: 0, behavior: 'smooth' });
+  }
   function renderStepsBar() {
     document.querySelectorAll('#sh-steps-bar .sh-step-item').forEach(item => {
       const s = +item.dataset.step; item.classList.remove('active', 'done');
@@ -1648,9 +1698,10 @@
     const docs = state.doctors;
     let h = ``;
     // ---- 两段排班提示 ----
+    h += `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 人员数据将从系统自动加载。<br>这里默认展示本周的排班，按<b>“GO”</b>快速跳到下一周。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员，需要为规培生指定他们对应的导师。</div>`;
     h += `<div class="sh-info-bar warn" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">`;
     h += `<span style="font-size:18px;"><i class="material-icons">warning</i></span>`;
-    h += `<span style="flex:1;line-height:1.5;">请确认已开启页面顶部的<b>「两段排班」</b>模式，否则排班辅助插件无法正常工作！</span>`;
+    h += `<span style="flex:1;line-height:1.5;">开始之前，请确认已开启页面顶部的<b>「两段排班」</b>模式，否则排班辅助插件无法正常工作！</span>`;
     h += `</div>`;
     // 格式化周一日期
     const monParts = weekInfo.monday.split('-');
@@ -1678,7 +1729,6 @@
     h += `</div>`;
     // 人员列表
     h += `<div class="sh-divider"></div>`;
-    h += `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 人员数据从系统自动加载。<br>仅显示排班类别为<b>"医疗"</b>和<b>"规培"</b>的人员。</div>`;
     h += `<div class="sh-subtitle"><span class="material-icons">list_alt</span> 人员列表 <span style="font-size:10px;color:#999;font-weight:400;">(${docs.length}人)</span></div>`;
     h += `<ul class="sh-doc-list">`;
     // 预计算导师候选列表（非规培生）
@@ -1736,7 +1786,7 @@
 
   // ===== S2: 门诊 =====
   function renderS2(body) {
-    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 四类门诊分别管理。<br>· 总院门诊 每天上、下午<br>· 简易门诊 时间不固定（表格中显示为总院门诊）<br>· 高新门诊 周内上午<br>· 梓潼门诊 周三上午</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 请先导入上一周的门诊。点击“应用到本周”，上一周<b>工作日</b>的门诊数据将被应用到下方配置区域。<br>周末门诊请在第 5 步中选派。<br>总院门诊默认以第一人为普通门诊，其他在同一时间段重复的，会被归入简易门诊。<br>梓潼门诊两周一次，需要手动增设或删除。</div>`;
 
     // ---- 导入上周门诊区域 ----
     h += renderPrevWeekOutpatientSection();
@@ -1896,7 +1946,7 @@
 
   // ===== S3: 特殊安排 =====
   function renderS3(body) {
-    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 为每位医生设置特殊安排。<br>选择医生，勾选时段，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：产假、事假、休、二线、培训、开会、医疗保障、脱产学习。</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 为每位医生设置特殊安排。<br>选择医生，<b>批量勾选时段</b>，再选择类型，可为不同的时间段批量应用班型。<br>特殊安排包括：休假、培训、开会、医疗保障、脱产学习等等。</div>`;
     h += `<label><span class="material-icons">medical_services</span> 选择医生</label><select id="sh-special-doc" data-action="renderSpecialForm"><option value="">— 请选择 —</option>${state.doctors.map(d => `<option value="${d.id}">${d.name} (#${d.number})</option>`).join('')}</select><div id="sh-special-form" style="margin-top:8px;"></div>`;
     h += `<div class="sh-nav-row"><button class="sh-btn-action sh-btn-outline" data-action="goToStep" data-step="2"><span class="material-icons">arrow_back</span> 上一步</button><button class="sh-btn-action sh-btn-primary" data-action="goToStep" data-step="4">下一步 <span class="material-icons">arrow_forward</span> <small>值班排班</small></button></div>`;
     body.innerHTML = h;
@@ -1922,7 +1972,7 @@
   function renderS4(body) {
     if (!state.dutyOrder || state.dutyOrder.length !== 8) state.dutyOrder = A.buildDefaultDutyOrder(state.doctors);
     const order = state.dutyOrder || [], pool = A.getDutyDoctorPool(state.doctors), flags = state.baiban1Flags || [];
-    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span>· 按住 ⋮⋮ 拖拽调整顺序。<br>· 节假日的中班自动转为休假。<br>· 已有安排不会被覆盖，安排后与门诊等冲突时，相应格子会闪烁提示。<br>· 重新执行自动排班，请先点清空按钮。</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span>· 请先加载、导入上一周的值班顺序。<br>· 按住 ⋮⋮ 拖拽调整顺序。<br>· 在人员未变动的情况下，可直接按顺序将前几位依次挪动至序列底部，直到上周日值班的医生成为值班序列第一位。<br>· 节假日的中班自动转为休假。<br>· 已有安排不会被覆盖，安排后与门诊等冲突时，相应格子会闪烁提示。<br>· 重新执行自动排班，请先点清空按钮。</div>`;
 
     // ---- 导入上周值班顺序区域 ----
     h += renderPrevWeekDutySection();
@@ -1948,12 +1998,12 @@
     syncFromPageTable();
 
     const flags = state.baiban1Flags || [], trainees = state.doctors.filter(d => d.type === 'trainee');
-    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 点击下方"分配白1"按钮，可快速安排白班1！</div>`;
+    let h = `<div class="sh-info-bar info"><span class="material-icons">tips_and_updates</span> 在这一步综合调整过程中，请按照页面上的提示依次处理冲突和细节安排。<br>排版流程结束，便可以提交更改了。</div>`;
 
     // ===== （一）调整冲突 =====
     h += `<div class="sh-subtitle" style="font-size:13px;color:#333;">（一）调整冲突</div>`;
     if (flags.length) {
-      h += `<div class="sh-info-bar warn" style="margin-bottom:0;"><span class="material-icons">warning</span> ${flags.length}个冲突可能需要安排白班1</div><ul class="sh-conflict-list">`;
+      h += `<div class="sh-info-bar warn" style="margin-bottom:0;"><span class="material-icons">warning</span> ${flags.length}个冲突可能需要安排白班1。<br>点击下方"分配白1"按钮，可快速安排白班1！</div><ul class="sh-conflict-list">`;
       for (let f of flags) {
         const resolved = !!f.resolvedBy;
         h += `<li class="${resolved ? 'resolved' : ''}" style="${resolved ? 'background:#f5f5f5;border-color:#d9d9d9;text-decoration:none;opacity:1;' : ''}"><span class="material-icons">${resolved ? 'info' : 'warning'}</span><span style="flex:1;font-size:10px;">${f.reason}</span><span style="font-size:9px;color:#999;">${A.DAYS[f.dayIdx]}${A.SLOT_LABELS[f.slot]}</span>${resolved ? '' : `<button class="sh-btn-action sh-btn-primary sh-btn-xs" data-action="quickBaiban1" data-day="${f.dayIdx}" data-slot="${f.slot}">分配白1</button>`}</li>`;
@@ -2005,7 +2055,7 @@
     const wkDutyDocs = A.getWeekendDutyDoctors(state);
     if (wkDutyDocs.length > 0) {
       const names = wkDutyDocs.map(d => d.name).join('、');
-      h += `<div class="sh-info-bar info" style="font-size:10px;">${names} 节假日参与值班，请在本周工作日为其分别找一个人员充足的下午安排休假。</div>`;
+      h += `<div class="sh-info-bar info" style="font-size:10px;"><b>${names}</b> 节假日参与值班，请在本周工作日为其分别找一个人员充足的下午安排休假。</div>`;
     } else {
       h += `<div class="sh-help-text">本周无人在节假日值班，无需安排补休。</div>`;
     }
@@ -2018,7 +2068,11 @@
     // ===== （五）规培生一键安排 =====
     if (trainees.length) {
       h += `<div class="sh-divider"></div><div class="sh-subtitle" style="font-size:13px;color:#333;">（五）规培生一键安排</div>`;
-      h += `<div class="sh-help-text">为 ${trainees.map(d => d.name).join('、')} 应用对应导师的排班（已设定的安排不会被覆盖）。</div>`;
+      h += `<div class="sh-help-text">为 <b>${trainees.map(d => d.name).join('、')}</b> 应用对应导师的排班（已设定的安排不会被覆盖）。</div>`;
+      const traineesWithoutMentor = trainees.filter(d => !d.mentorId);
+      if (traineesWithoutMentor.length) {
+        h += `<div class="sh-info-bar warn" style="font-size:10px;margin-bottom:6px;"><span class="material-icons">warning</span> <b>${traineesWithoutMentor.map(d => d.name).join('、')}</b> 尚未指定导师，请先在第 1 步中为其指定导师。未指定导师的规培生将被跳过。</div>`;
+      }
       h += `<button class="sh-btn-action sh-btn-success sh-btn-block" data-action="syncTrainees"><span class="material-icons">sync</span> 为规培生应用导师排班</button>`;
     }
 
@@ -2157,9 +2211,46 @@
             label.click();
           }
         }
+        // 禁止关闭"两段排班"（插件逻辑依赖此模式）
+        blockTwoSegmentUncheck(label);
         return;
       }
     }
+  }
+
+  /**
+   * 阻止用户手动关闭"两段排班"复选框
+   * 通过捕获阶段拦截 click 事件，阻止 React 合成事件收到点击
+   */
+  function blockTwoSegmentUncheck(label) {
+    if (!label) return;
+    // 避免重复绑定
+    if (_twoSegmentBlockHandler) {
+      label.removeEventListener('click', _twoSegmentBlockHandler, true);
+    }
+    _twoSegmentBlockHandler = function (e) {
+      if (label.classList.contains('ant-checkbox-wrapper-checked')) {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        showToast('"两段排班"模式由插件管理，不可关闭', 'warn');
+      }
+    };
+    label.addEventListener('click', _twoSegmentBlockHandler, true);
+  }
+
+  /** 解除"两段排班"关闭阻止 */
+  function unblockTwoSegmentUncheck() {
+    if (!_twoSegmentBlockHandler) return;
+    var allLabels = document.querySelectorAll('.ant-checkbox-wrapper');
+    for (var i = 0; i < allLabels.length; i++) {
+      var label = allLabels[i];
+      if (label.textContent.indexOf('两段排班') !== -1 || label.textContent.indexOf('两段') !== -1) {
+        label.removeEventListener('click', _twoSegmentBlockHandler, true);
+        break;
+      }
+    }
+    _twoSegmentBlockHandler = null;
   }
 
   /**
