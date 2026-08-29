@@ -104,10 +104,9 @@ async function getCurrentTabInfo() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.id) return { tab: null, isMatch: false, isInjected: false };
 
-  // 检查 URL 是否匹配 manifest content_scripts 的 match 模式
+  // 检查 URL 是否匹配排班页（与 content.js 的 HOSPITAL_PAGE_RE 保持一致）
   const url = tab.url || '';
-  const isMatch = /10\.66\.66\.151\/app\/attendance\/schedules\/hospital/.test(url) ||
-    /^http:\/\/localhost\//.test(url);
+  const isMatch = /10\.66\.66\.151\/app\/attendance\/schedules\/hospital/.test(url);
 
   // 尝试 ping content script 判断是否已注入
   let isInjected = false;
@@ -167,9 +166,9 @@ async function onToggleEnable(enabled) {
           showPopupToast('正在为当前页面注入插件...', 'info');
           const injected = await injectContentScripts(tab.id);
           if (injected) {
-            // 注入成功后发消息
+            // 注入成功后发消息（非排班页面强制启用）
             await new Promise(r => setTimeout(r, 200)); // 等脚本初始化
-            chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled }).catch(() => {});
+            chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled, force: !isMatch }).catch(() => {});
             showPopupToast('插件已启用！', 'success');
           } else {
             // 注入失败 → 引导用户使用测试模式
@@ -190,8 +189,8 @@ async function onToggleEnable(enabled) {
           return;
         }
       } else {
-        // 已有 content script，直接通知
-        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled }).catch(() => {
+        // 已有 content script，直接通知（非排班页面强制启用）
+        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_ENABLED', enabled, force: !isMatch }).catch(() => {
           showPopupToast('插件已启用，但页面未响应。请刷新页面后重试。', 'warn');
         });
       }

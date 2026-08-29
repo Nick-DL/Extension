@@ -35,10 +35,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       extensionState.enabled = message.enabled;
       extensionState.activeTabId = sender.tab?.id || null;
       saveState();
-      // 通知content script启用/禁用
+      // 通知content script启用/禁用（保留 force 标志，供非排班页面临时启用）
       notifyContentScript(sender.tab?.id, {
         type: 'TOGGLE_ENABLED',
-        enabled: message.enabled
+        enabled: message.enabled,
+        force: message.force
       });
       sendResponse({ success: true });
       break;

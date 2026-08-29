@@ -25,7 +25,7 @@
     cancelPreHolidayZhongban: false
   };
 
-  let extEnabled = false, panelVisible = false, isMinimized = false;
+  let extEnabled = false, forcedEnabled = false, panelVisible = false, isMinimized = false;
   let restoreFetch = null, classMap = {}, classIdMap = {}, locationId = '';
   let originalData = null;
   let weekInfo = getWeekInfo(new Date());
@@ -167,9 +167,10 @@
     var isHospitalPage = HOSPITAL_PAGE_RE.test(window.location.href);
     if (isHospitalPage && !extEnabled) {
       extEnabled = true;
+      forcedEnabled = false;
       onEnabled();
       chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: true });
-    } else if (!isHospitalPage && extEnabled) {
+    } else if (!isHospitalPage && extEnabled && !forcedEnabled) {
       extEnabled = false;
       onDisabled();
       chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: false });
@@ -207,10 +208,26 @@
   function handleMessage(message, sender, sendResponse) {
     switch (message.type) {
       case 'TOGGLE_ENABLED':
-        if (message.enabled && !HOSPITAL_PAGE_RE.test(window.location.href)) {
-          showToast('请在排班页面中启用辅助插件', 'warn'); break;
+        if (message.enabled) {
+          var onHospitalPage = HOSPITAL_PAGE_RE.test(window.location.href);
+          // 非排班页面必须带 force 标志才能临时启用（由 popup「页面控制」触发）
+          if (!onHospitalPage && !message.force) {
+            showToast('请在排班页面中启用辅助插件', 'warn'); break;
+          }
+          forcedEnabled = !onHospitalPage && !!message.force;
+          if (!extEnabled) {
+            extEnabled = true;
+            onEnabled();
+            chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: true });
+          }
+        } else {
+          forcedEnabled = false;
+          if (extEnabled) {
+            extEnabled = false;
+            onDisabled();
+          }
         }
-        extEnabled = message.enabled; extEnabled ? onEnabled() : onDisabled(); break;
+        break;
       case 'OPEN_PANEL': extEnabled ? togglePanel(true) : showToast('请先在扩展弹窗中启用辅助插件', 'warn'); break;
       case 'REFRESH_DATA': refreshAllData().then(() => { showToast('数据已刷新', 'success'); renderPanel(); }); break;
       case 'RESTORE_DATA': restoreOriginalData(); break;
