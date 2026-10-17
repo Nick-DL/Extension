@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>截图传输 · 排班辅助</title>
+<link rel="stylesheet" href="send.css">
+</head>
+<body>
+<div class="app">
+  <header class="appbar">
+    <div class="brand">
+      <span class="material-icons brand-icon">sensors</span>
+      <div class="brand-text">
+        <h1>截图传输</h1>
+        <p>排班表截图 · 光学传输</p>
+      </div>
+    </div>
+    <button class="icon-btn" id="btn-close" type="button" title="关闭窗口" aria-label="关闭窗口">
+      <span class="material-icons">close</span>
+    </button>
+  </header>
+
+  <ol class="stepper" id="stepper">
+    <li data-step="1" class="active"><span class="step-num">1</span><span class="step-text"><b>截屏</b><small>排班表截图</small></span></li>
+    <li data-step="2"><span class="step-num">2</span><span class="step-text"><b>接收端</b><small>扫码打开接收页</small></span></li>
+    <li data-step="3"><span class="step-num">3</span><span class="step-text"><b>传输</b><small>显示动态二维码</small></span></li>
+  </ol>
+
+  <main class="main">
+    <!-- ==================== 第 1 步：截屏 ==================== -->
+    <section class="step-panel active" data-step="1">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>截取排班表</h2>
+            <p class="muted">只截取排班表格区域：保留「姓名」列与日期排班列，自动附带标题与截屏时间。</p>
+          </div>
+          <span class="material-icons head-icon">photo_camera</span>
+        </div>
+
+        <div class="target" id="target">
+          <span class="material-icons">tab</span>
+          <div class="target-text">
+            <span class="target-label">目标页面</span>
+            <b id="target-title">排班系统</b>
+            <span class="target-url" id="target-url"></span>
+          </div>
+        </div>
+
+        <div class="empty" id="preview-empty">
+          <span class="material-icons empty-icon">screenshot_monitor</span>
+          <b>还没有截图</b>
+          <p class="muted">点击下面的按钮后，浏览器会临时切到排班页面并自动截取表格，完成后回到这里预览。</p>
+          <button class="btn primary" id="btn-capture" type="button">
+            <span class="material-icons">screenshot</span> 截取排班表
+          </button>
+        </div>
+
+        <div class="preview" id="preview-wrap" hidden>
+          <div class="preview-frame">
+            <img id="preview-img" alt="排班表截图预览">
+          </div>
+          <div class="preview-meta">
+            <span id="preview-info" class="muted"></span>
+            <button class="btn ghost small" id="btn-recapture" type="button">
+              <span class="material-icons">refresh</span> 重新截屏
+            </button>
+          </div>
+        </div>
+
+        <div class="alert error" id="step1-error" hidden></div>
+      </div>
+      <footer class="actions">
+        <span class="status muted" id="capture-status"></span>
+        <button class="btn primary" id="to-step2" type="button" disabled>
+          下一步 <span class="material-icons">arrow_forward</span>
+        </button>
+      </footer>
+    </section>
+
+    <!-- ==================== 第 2 步：接收页 ==================== -->
+    <section class="step-panel" data-step="2" hidden>
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>在接收设备上打开接收页</h2>
+            <p class="muted">用手机相机扫描二维码，或直接在浏览器里输入下面的地址。</p>
+          </div>
+          <span class="material-icons head-icon">qr_code_2</span>
+        </div>
+
+        <div class="receive-grid">
+          <div class="qr-box">
+            <img id="link-qr" alt="接收页二维码" hidden>
+            <div class="qr-placeholder" id="link-qr-placeholder">
+              <span class="material-icons">qr_code_2</span>
+              <span id="link-qr-tip">正在生成二维码…</span>
+            </div>
+          </div>
+          <div class="receive-side">
+            <div class="receive-link">
+              <span class="material-icons">link</span>
+              <code>https://oft.nickdl.site/receive.html</code>
+            </div>
+            <p class="muted small">接收端需要允许摄像头：用 https:// 打开时浏览器才会授权。</p>
+            <div class="file-chip" id="file-chip"></div>
+          </div>
+        </div>
+      </div>
+      <footer class="actions">
+        <button class="btn ghost" id="to-step1" type="button">
+          <span class="material-icons">arrow_back</span> 上一步
+        </button>
+        <button class="btn primary" id="to-step3" type="button">
+          开始显示二维码 <span class="material-icons">qr_code_2</span>
+        </button>
+      </footer>
+    </section>
+
+    <!-- ==================== 第 3 步：传输 ==================== -->
+    <section class="step-panel transfer-panel" data-step="3" hidden>
+      <div class="transfer-grid">
+        <div class="stage" id="stage">
+          <iframe id="core-frame" title="光学传输核心（发送端）" allow="clipboard-write; fullscreen; screen-wake-lock" referrerpolicy="no-referrer"></iframe>
+          <div class="stage-cover" id="stage-cover">
+            <span class="material-icons">sensors</span>
+            <span id="stage-cover-text">正在准备二维码…</span>
+          </div>
+        </div>
+        <aside class="side">
+          <div class="card side-card">
+            <h2>让接收端对准二维码</h2>
+            <p class="muted small">屏幕亮度调到最高，手机保持稳定；接收端凑够数据块后会自动还原并校验。</p>
+
+            <details class="settings" open>
+              <summary><span class="material-icons">tune</span> 传输设置</summary>
+              <div class="settings-grid">
+                <label>帧率 fps
+                  <select id="cfg-fps" data-key="fps">
+                    <option value="10">10</option>
+                    <option value="15">15</option>
+                    <option value="20">20</option>
+                    <option value="24">24</option>
+                    <option value="30" selected>30</option>
+                    <option value="55">55</option>
+                    <option value="60">60</option>
+                  </select>
+                </label>
+                <label>每帧字节
+                  <select id="cfg-bytes" data-key="bytes">
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                    <option value="1465">1465</option>
+                    <option value="1850">1850</option>
+                    <option value="2331">2331</option>
+                    <option value="2953" selected>2953</option>
+                  </select>
+                </label>
+                <label>屏上码数
+                  <select id="cfg-grid" data-key="grid">
+                    <option value="1" selected>1 个</option>
+                    <option value="2">2 个（1×2）</option>
+                    <option value="4">4 个（2×2）</option>
+                    <option value="6">6 个（2×3）</option>
+                  </select>
+                </label>
+                <label>纠错等级
+                  <select id="cfg-ecc" data-key="ecc">
+                    <option value="L" selected>L（最快）</option>
+                    <option value="M">M</option>
+                    <option value="Q">Q</option>
+                    <option value="H">H（最稳）</option>
+                  </select>
+                </label>
+              </div>
+              <p class="muted tiny">传得慢时先把「每帧字节」降到 1000、帧率降到 20–30。</p>
+            </details>
+
+            <div class="status-block">
+              <span class="status-dot" id="status-dot"></span>
+              <span id="transfer-status">准备中…</span>
+            </div>
+            <div class="file-chip" id="transfer-file"></div>
+          </div>
+        </aside>
+      </div>
+      <footer class="actions">
+        <button class="btn ghost" id="to-step2b" type="button">
+          <span class="material-icons">arrow_back</span> 上一步
+        </button>
+        <button class="btn ghost" id="btn-restart" type="button">
+          <span class="material-icons">restart_alt</span> 重新截屏
+        </button>
+      </footer>
+    </section>
+  </main>
+
+  <footer class="appfoot">
+    光学传输核心基于：Decimen Optical Transfer v0.5.3 (AGPL-3.0-or-later) · <a href="/LICENSE.txt" target="_blank">许可证</a>
+  </footer>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="bridge.js"></script>
+<script src="capture.js"></script>
+<script src="send.js"></script>
+</body>
+</html>

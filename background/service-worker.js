@@ -22,6 +22,76 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ extensionState });
 });
 
+// ==================== 截图传输窗口 ====================
+const TRANSFER_WINDOW_KEY = 'transferWindowInfo';
+
+function readTransferWindow() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.session.get([TRANSFER_WINDOW_KEY], (result) => {
+        if (chrome.runtime.lastError) { resolve(null); return; }
+        resolve((result && result[TRANSFER_WINDOW_KEY]) || null);
+      });
+    } catch (err) { resolve(null); }
+  });
+}
+
+function writeTransferWindow(info) {
+  return new Promise((resolve) => {
+    try {
+      if (info) {
+        chrome.storage.session.set({ [TRANSFER_WINDOW_KEY]: info }, () => resolve());
+      } else {
+        chrome.storage.session.remove(TRANSFER_WINDOW_KEY, () => resolve());
+      }
+    } catch (err) { resolve(); }
+  });
+}
+
+/**
+ * 打开（或复用）截图传输窗口
+ * @param {number} sourceTabId 发起入口所在的排班标签页
+ */
+async function openTransferWindow(sourceTabId) {
+  const tabId = Number(sourceTabId) || null;
+  if (!tabId) return { success: false, error: '没有找到要截图的排班页面' };
+
+  const existing = await readTransferWindow();
+  if (existing && existing.windowId) {
+    try {
+      const win = await chrome.windows.get(existing.windowId);
+      if (win) {
+        await writeTransferWindow({ windowId: existing.windowId, sourceTabId: tabId });
+        await chrome.windows.update(existing.windowId, { focused: true });
+        // 已经打开的传输窗口：换一个目标标签页，由页面自己重置流程
+        chrome.runtime.sendMessage({ type: 'TRANSFER_SET_SOURCE', sourceTabId: tabId }, () => {
+          void chrome.runtime.lastError;
+        });
+        return { success: true, windowId: existing.windowId, reused: true };
+      }
+    } catch (err) {
+      // 窗口已经关闭，继续创建新的
+    }
+  }
+
+  const url = chrome.runtime.getURL('oft/send.html') + '?tab=' + encodeURIComponent(tabId);
+  const win = await chrome.windows.create({
+    url,
+    type: 'popup',
+    width: 1120,
+    height: 860,
+    focused: true
+  });
+  await writeTransferWindow({ windowId: win.id, sourceTabId: tabId });
+  return { success: true, windowId: win.id };
+}
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  readTransferWindow().then((info) => {
+    if (info && info.windowId === windowId) writeTransferWindow(null);
+  });
+});
+
 // ==================== 消息处理 ====================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[排班辅助 BG] 收到消息:', message.type);
@@ -105,6 +175,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .catch(err => sendResponse({ success: false, error: err.message }));
       return true;
 
+    case 'OPEN_TRANSFER': {
+      const targetTabId = message.tabId || (sender.tab && sender.tab.id);
+      openTransferWindow(targetTabId)
+        .then(res => sendResponse(res))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+      return true;
+    }
+
+    case 'GET_TRANSFER_TARGET':
+      readTransferWindow()
+        .then((info) => {
+          if (!info) { sendResponse({ success: false }); return; }
+          if (message.windowId && info.windowId !== message.windowId) {
+            sendResponse({ success: false, sourceTabId: null });
+            return;
+          }
+          sendResponse({ success: true, sourceTabId: info.sourceTabId, windowId: info.windowId });
+        })
+        .catch(() => sendResponse({ success: false }));
+      return true;
+
     default:
       sendResponse({ success: false, error: 'Unknown message type' });
   }
@@ -162,7 +253,7 @@ async function registerTestScripts(patterns) {
     await chrome.scripting.registerContentScripts([{
       id: TEST_SCRIPT_ID,
       matches: validPatterns,
-      js: ['lib/algorithm.js', 'lib/api.js', 'content/content.js'],
+      js: ['lib/algorithm.js', 'lib/api.js', 'content/content.js', 'content/screenshot.js'],
       css: ['content/floating-panel.css'],
       runAt: 'document_end',
       persistAcrossSessions: true

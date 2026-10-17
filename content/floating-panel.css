@@ -267,6 +267,8 @@
 .sh-btn-xs { padding: 2px 6px; font-size: 10px; border-radius: 3px; }
 .sh-btn-block { width: 100%; justify-content: center; }
 .sh-btn-group { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.sh-btn-group-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.sh-btn-group-3 .sh-btn-action { justify-content: center; min-width: 0; overflow: hidden; }
 
 /* ========== 信息条 ========== */
 .sh-info-bar {

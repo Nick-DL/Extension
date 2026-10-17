@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btnRestoreData').addEventListener('click', restoreData);
   document.getElementById('btnOpenPanel').addEventListener('click', openFloatingPanel);
   document.getElementById('btnAddTestPattern').addEventListener('click', addTestPattern);
+  document.getElementById('btnScreenshotTransfer').addEventListener('click', openScreenshotTransfer);
 
   // 加载扩展状态
   try {
@@ -217,6 +218,64 @@ async function openFloatingPanel() {
   chrome.tabs.sendMessage(tab.id, { type: 'OPEN_PANEL' }).catch(() => {
     showPopupToast('插件未响应，请刷新页面后重试', 'warn');
   });
+}
+
+/**
+ * 打开「截图传输」弹出窗口。
+ * 目标固定为当前标签页；即使同时打开了多个排班页面，也只截这一个。
+ */
+async function openScreenshotTransfer() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) {
+      showPopupToast('无法获取当前标签页信息', 'error');
+      return;
+    }
+    const url = tab.url || '';
+    const isSchedulePage = /10\.66\.66\.151\/app\/attendance\/schedules\/hospital/.test(url);
+    const testMode = await new Promise((resolve) => {
+      chrome.storage.local.get(['testMode'], (result) => resolve(!!(result && result.testMode)));
+    });
+    if (!isSchedulePage && !testMode) {
+      showPopupToast('请先在排班页面中使用截图传输', 'warn');
+      return;
+    }
+
+    // 页面可能没有启用插件，但截图脚本可以单独补注入
+    let injected = false;
+    try {
+      const pong = await chrome.tabs.sendMessage(tab.id, { type: 'SH_SHOT_PING' });
+      injected = !!(pong && pong.ok);
+    } catch (e) {
+      injected = false;
+    }
+    if (!injected) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/screenshot.js']
+        });
+      } catch (err) {
+        showPopupToast('当前页面无法截图：' + err.message, 'error');
+        return;
+      }
+    }
+
+    chrome.runtime.sendMessage({ type: 'OPEN_TRANSFER', tabId: tab.id }, (resp) => {
+      if (chrome.runtime.lastError) {
+        showPopupToast('打开截图传输失败：' + chrome.runtime.lastError.message, 'error');
+        return;
+      }
+      if (!resp || !resp.success) {
+        showPopupToast((resp && resp.error) || '打开截图传输失败', 'error');
+        return;
+      }
+      window.close();
+    });
+  } catch (e) {
+    console.error('[Popup] 打开截图传输失败:', e);
+    showPopupToast('打开截图传输失败: ' + e.message, 'error');
+  }
 }
 
 async function refreshData() {

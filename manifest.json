@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "排班辅助插件",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "绵阳市第三人民医院 - 科室排班辅助填表工具",
   "permissions": [
     "storage",
@@ -10,6 +10,7 @@
     "cookies"
   ],
   "host_permissions": [
+    "<all_urls>",
     "http://10.66.66.151/*",
     "http://localhost/*",
     "https://*/*"
@@ -26,7 +27,8 @@
       "js": [
         "lib/algorithm.js",
         "lib/api.js",
-        "content/content.js"
+        "content/content.js",
+        "content/screenshot.js"
       ],
       "css": [
         "content/floating-panel.css"

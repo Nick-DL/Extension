@@ -29,6 +29,12 @@
   let restoreFetch = null, classMap = {}, classIdMap = {}, locationId = '';
   let originalData = null;
   let weekInfo = getWeekInfo(new Date());
+
+  // 截屏模块（content/screenshot.js）通过这个 getter 读取当前工作周，用于生成图片标题
+  window.__SH_SCREENSHOT_META_GETTER__ = function () {
+    var w = weekInfo || {};
+    return { year: w.year || null, week: w.week || null, monday: w.monday || null, url: window.location.href };
+  };
   let dragSrcIdx = null, dragOpacityTimer = null;
   let prevWeekOutpatientPreview = null;  // { outpatientGeneral, outpatientGaoxin, outpatientZitong, conflicts:[] }
   let prevWeekOutpatientLoaded = false;
@@ -206,6 +212,8 @@
   }
 
   function handleMessage(message, sender, sendResponse) {
+    // 截屏指令由 content/screenshot.js 处理；这里不响应，避免抢答
+    if (message && typeof message.type === 'string' && message.type.indexOf('SH_SHOT_') === 0) return false;
     switch (message.type) {
       case 'TOGGLE_ENABLED':
         if (message.enabled) {
@@ -1412,6 +1420,28 @@
     } catch (err) { showToast('提交异常: ' + err.message, 'error'); }
   }
 
+  // ==================== 截图传输 ====================
+  /**
+   * 打开「截图传输」弹出窗口。
+   * 由 background 记录发起标签页，截图时只对这一个标签页操作，
+   * 即使同时打开了多个排班页面也不会截错。
+   */
+  function openTransferWindow() {
+    try {
+      chrome.runtime.sendMessage({ type: 'OPEN_TRANSFER' }, function (resp) {
+        if (chrome.runtime.lastError) {
+          showToast('打开截图传输失败：' + chrome.runtime.lastError.message, 'error');
+          return;
+        }
+        if (!resp || !resp.success) {
+          showToast((resp && resp.error) || '打开截图传输失败', 'error');
+        }
+      });
+    } catch (err) {
+      showToast('打开截图传输失败：' + err.message, 'error');
+    }
+  }
+
   // ==================== DOM 注入 ====================
   function injectQuickEntry() {
     if (document.getElementById('sh-quick-entry')) return;
@@ -1437,10 +1467,11 @@
     }
     const p = document.createElement('div'); p.id = 'scheduling-helper-panel';
     p.addEventListener('contextmenu', (ev) => ev.preventDefault());
-    p.innerHTML = `<div class="sh-panel-header" id="sh-panel-header"><span class="sh-title"><span class="material-icons">local_hospital</span> 排班辅助</span><div class="sh-actions"><button class="sh-btn" id="sh-btn-minimize" title="最小化">−</button><button class="sh-btn" id="sh-btn-close" title="关闭">✕</button></div></div><div class="sh-steps-bar" id="sh-steps-bar"><div class="sh-step-item active" data-action="goToStep" data-step="1"><span class="sh-step-num">1</span>人员</div><div class="sh-step-item" data-action="goToStep" data-step="2"><span class="sh-step-num">2</span>门诊</div><div class="sh-step-item" data-action="goToStep" data-step="3"><span class="sh-step-num">3</span>特殊</div><div class="sh-step-item" data-action="goToStep" data-step="4"><span class="sh-step-num">4</span>值班</div><div class="sh-step-item" data-action="goToStep" data-step="5"><span class="sh-step-num">5</span>确认</div></div><div class="sh-panel-body" id="sh-panel-body"></div>`;
+    p.innerHTML = `<div class="sh-panel-header" id="sh-panel-header"><span class="sh-title"><span class="material-icons">local_hospital</span> 排班辅助</span><div class="sh-actions"><button class="sh-btn" id="sh-btn-shot" title="截图传输" aria-label="截图传输"><span class="material-icons" style="font-size:16px;">photo_camera</span></button><button class="sh-btn" id="sh-btn-minimize" title="最小化">−</button><button class="sh-btn" id="sh-btn-close" title="关闭">✕</button></div></div><div class="sh-steps-bar" id="sh-steps-bar"><div class="sh-step-item active" data-action="goToStep" data-step="1"><span class="sh-step-num">1</span>人员</div><div class="sh-step-item" data-action="goToStep" data-step="2"><span class="sh-step-num">2</span>门诊</div><div class="sh-step-item" data-action="goToStep" data-step="3"><span class="sh-step-num">3</span>特殊</div><div class="sh-step-item" data-action="goToStep" data-step="4"><span class="sh-step-num">4</span>值班</div><div class="sh-step-item" data-action="goToStep" data-step="5"><span class="sh-step-num">5</span>确认</div></div><div class="sh-panel-body" id="sh-panel-body"></div>`;
     document.body.appendChild(p);
     makeDraggable(p.querySelector('.sh-panel-header'), p);
     makeHeightResizable(p);
+    document.getElementById('sh-btn-shot').addEventListener('click', function (e) { e.stopPropagation(); openTransferWindow(); });
     document.getElementById('sh-btn-minimize').addEventListener('click', toggleMinimize);
     document.getElementById('sh-btn-close').addEventListener('click', () => togglePanel(false));
     // 统一事件代理（避免 CSP 内联事件违规）
@@ -1479,6 +1510,7 @@
         case 'syncTrainees': syncTrainees(); break;
         case 'submitAll': submitAllChanges(); break;
         case 'exportFull': exportFullScheduleJSON(); break;
+        case 'screenshotTransfer': openTransferWindow(); break;
         case 'importFull': importFullScheduleJSON(); break;
         case 'confirmWeek': confirmWeekChange(); break;
         case 'goPrevWeek': goToPrevWeek(); break;
@@ -1595,7 +1627,7 @@
   function makeDraggable(handle, target) {
     let dragging = false, sx, sy, sl, st, moved = false;
     handle.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON') return;
+      if (e.target.closest && e.target.closest('button')) return;
       dragging = true; moved = false;
       sx = e.clientX; sy = e.clientY; const r = target.getBoundingClientRect(); sl = r.left; st = r.top;
       target.style.transition = 'none'; document.body.style.userSelect = 'none';
@@ -2102,7 +2134,8 @@
     h += `<div class="sh-stats-wrap">${Object.entries(stats).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="sh-stat-tag" style="background:${A.TYPE_COLORS[k]}18;border-color:${A.TYPE_COLORS[k]}44;color:${A.TYPE_COLORS[k]};">${k}: ${v}次</span>`).join('') || '<span style="font-size:10px;color:#999;">暂无数据</span>'}</div>`;
 
     // 导出 / 导入 / 提交
-    h += `<div class="sh-btn-group" style="margin-top:10px;">`;
+    h += `<div class="sh-btn-group sh-btn-group-3" style="margin-top:10px;">`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="screenshotTransfer"><span class="material-icons">photo_camera</span> 截图传输</button>`;
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="exportFull"><span class="material-icons">file_upload</span> 导出完整配置</button>`;
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importFull"><span class="material-icons">file_download</span> 导入完整配置</button>`;
     h += `</div>`;
