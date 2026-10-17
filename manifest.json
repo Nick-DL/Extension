@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "排班辅助插件",
-  "version": "2.4.0",
+  "version": "2.4.2",
   "description": "绵阳市第三人民医院 - 科室排班辅助填表工具",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1WyDuahaetG3v5UMf0+moAZfZVsgemGAwxpNnutd64v9BrYOvXP4Imsyb8GHUCriu7In5Fpx3xnpRKnx1e0bQqIOdUtYhEPOzqRQ5VlTnbQgu3v/sgYz8tRrC4sQWwPfKRN4S1fKfwC6saKy7moc5FVXwfNflBMSOWTHLl6iFcFAzleF1XP0qctNRhqmmql9bT2AE23r6Jg/BfjVZ36JcqN+ntQTO3zXo7leYVLB4BFxlBBzYft4qtFog0XWp7/RK4YS4RR2Fl9Dy5ZkfBCtUpL+wtfsiD5iJ223wUwUuqZO8lRc5P/M/UFhPPyID/b0/su4pLWq9yCw/92Z3hZowIDAQAB",
   "permissions": [
     "storage",
     "activeTab",

@@ -227,6 +227,11 @@
             extEnabled = true;
             onEnabled();
             chrome.runtime.sendMessage({ type: 'SET_ENABLED', enabled: true });
+            // 调试页面通常加载不到排班接口，onEnabled 里的数据加载会失败；
+            // 先把浮窗打开，保证截图传输入口可用（截图本身只依赖页面上的 ant 表格）
+            if (forcedEnabled) {
+              setTimeout(function () { if (extEnabled) togglePanel(true); }, 0);
+            }
           }
         } else {
           forcedEnabled = false;
@@ -236,6 +241,14 @@
           }
         }
         break;
+      case 'GET_PAGE_STATE':
+        sendResponse({
+          success: true,
+          enabled: extEnabled,
+          forced: forcedEnabled,
+          isHospitalPage: HOSPITAL_PAGE_RE.test(window.location.href)
+        });
+        return true;
       case 'OPEN_PANEL': extEnabled ? togglePanel(true) : showToast('请先在扩展弹窗中启用辅助插件', 'warn'); break;
       case 'REFRESH_DATA': refreshAllData().then(() => { showToast('数据已刷新', 'success'); renderPanel(); }); break;
       case 'RESTORE_DATA': restoreOriginalData(); break;
@@ -2135,8 +2148,8 @@
 
     // 导出 / 导入 / 提交
     h += `<div class="sh-btn-group sh-btn-group-3" style="margin-top:10px;">`;
-    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="screenshotTransfer"><span class="material-icons">photo_camera</span> 截图传输</button>`;
-    h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="exportFull"><span class="material-icons">file_upload</span> 导出完整配置</button>`;
+    h += `<button class="sh-btn-action sh-btn-primary sh-btn-sm" data-action="screenshotTransfer"><span class="material-icons">photo_camera</span> 截图传输</button>`;
+    h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="exportFull"><span class="material-icons">file_upload</span> 导出完整配置</button>`;
     h += `<button class="sh-btn-action sh-btn-outline sh-btn-sm" data-action="importFull"><span class="material-icons">file_download</span> 导入完整配置</button>`;
     h += `</div>`;
     h += `<button class="sh-btn-action sh-btn-primary sh-btn-block" data-action="submitAll" style="margin-top:10px;padding:9px 16px;font-size:13px;"><span class="material-icons">check_circle</span> 提交所有修改到系统</button>`;

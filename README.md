@@ -67,7 +67,7 @@ Extension/
 
 ### 截图传输权限
 
-截图传输使用 `chrome.tabs.captureVisibleTab`。该 API 只允许拥有 `<all_urls>` 或 `activeTab` 的扩展调用；为了让浮窗里的入口也能稳定工作，`manifest.json` 申请了 `<all_urls>`。浏览器会显示“读取和更改所有网站上的数据”的提示，这是该功能的必要条件；content script 仍然只在排班页面与测试页面运行。
+截图传输使用 `chrome.tabs.captureVisibleTab`。该 API 只允许拥有 `<all_urls>` 或 `activeTab` 的扩展调用；为了让浮窗里的入口也能稳定工作，`manifest.json` 申请了 `<all_urls>`。浏览器会显示“读取和更改所有网站上的数据”的提示，这是该功能的必要条件；content script 默认只在排班页面与测试页面运行，临时启用时由扩展向当前页面注入。
 
 ### 测试模式
 
@@ -116,6 +116,15 @@ Extension/
 
 点击入口会打开一个独立的“截图传输”弹出窗口。窗口记录发起入口的那个标签页；即使同时打开了多个排班页面，截图也只针对该标签页。
 
+### 调试页面
+
+在扩展弹窗中打开“为本页面启用辅助插件”后，当前页面即使不是正式排班地址，也可以使用截图传输：
+
+- 从扩展弹窗的“截图传输”区块打开发送窗口；
+- 从浮窗右上角的相机按钮或第 5 步的“截图传输”按钮打开。
+
+截图仍然要求页面内存在 ant 排班表格（列识别规则不变）；排班接口加载失败不影响这些入口。
+
 ### 三步流程
 
 1. **截屏**：点击“截取排班表”，浏览器会临时切到排班页面并自动截取。截屏只保留 ant 表格区域，并且：
@@ -140,7 +149,7 @@ Extension/
 
 - 截图功能依赖页面上的 ant 表格结构；若系统界面升级导致表格结构变化，需要同步调整 `content/screenshot.js` 的列识别规则。
 - 建议在“周 + 两段排班”视图下使用（插件的排班流程也基于该视图）。
-- 光学传输核心来自 [Decimen Optical Transfer v0.5.3](https://github.com/bashalarmistalt/decimen-optical-transfer)，以 AGPL-3.0-or-later 许可随扩展分发，本插件为节省空间不再附带许可证文书，请加以注意。为适配扩展页面，只把核心的内联脚本外置为 `oft/core/js/core-send.js`，传输逻辑未改动。
+- 光学传输核心来自 [Decimen Optical Transfer v0.5.3](https://github.com/bashalarmistalt/decimen-optical-transfer)，以 AGPL-3.0-or-later 许可随扩展分发，本插件为节省空间不再附带完整的许可证文书，说明见 `LICENSES.txt`，请加以注意。为适配扩展页面，只把核心的内联脚本外置为 `oft/core/js/core-send.js`，传输逻辑未改动。
 
 ## 页面表格同步
 

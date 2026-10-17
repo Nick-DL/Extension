@@ -129,7 +129,7 @@ async function injectContentScripts(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tabId },
-      files: ['lib/algorithm.js', 'lib/api.js', 'content/content.js']
+      files: ['lib/algorithm.js', 'lib/api.js', 'content/content.js', 'content/screenshot.js']
     });
     await chrome.scripting.insertCSS({
       target: { tabId: tabId },
@@ -158,6 +158,7 @@ async function onToggleEnable(enabled) {
       showPopupToast('无法获取当前标签页信息', 'error');
       return;
     }
+    currentState.activeTabId = enabled ? tab.id : null;
 
     if (enabled) {
       // === 启用插件 ===
@@ -221,8 +222,24 @@ async function openFloatingPanel() {
 }
 
 /**
+ * 读取当前页面里 content script 的启用状态。
+ * 用于支持「为本页面启用辅助插件」临时启用后的调试页面。
+ * @returns {Promise<boolean|null>} null 表示页面脚本不支持查询（旧版本或未注入）
+ */
+async function getPageEnableState(tabId) {
+  try {
+    const resp = await chrome.tabs.sendMessage(tabId, { type: 'GET_PAGE_STATE' });
+    if (resp && resp.success && typeof resp.enabled === 'boolean') return resp.enabled;
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * 打开「截图传输」弹出窗口。
  * 目标固定为当前标签页；即使同时打开了多个排班页面，也只截这一个。
+ * 排班页面、测试模式页面，以及临时启用插件的调试页面都可以打开。
  */
 async function openScreenshotTransfer() {
   try {
@@ -236,8 +253,17 @@ async function openScreenshotTransfer() {
     const testMode = await new Promise((resolve) => {
       chrome.storage.local.get(['testMode'], (result) => resolve(!!(result && result.testMode)));
     });
+    // 调试场景：页面本身不是排班地址，但已通过「为本页面启用辅助插件」临时启用
+    let pageEnabled = false;
     if (!isSchedulePage && !testMode) {
-      showPopupToast('请先在排班页面中使用截图传输', 'warn');
+      const pageState = await getPageEnableState(tab.id);
+      // 新版页面脚本直接返回页面级状态；旧版只回 {success:true} 时，
+      // 用 background 记录的启用标签页兜底，避免扩展更新后旧页面必须刷新才能用
+      pageEnabled = pageState === true ||
+        (pageState === null && !!currentState.enabled && currentState.activeTabId === tab.id);
+    }
+    if (!isSchedulePage && !testMode && !pageEnabled) {
+      showPopupToast('请先在排班页面中使用截图传输，或在当前页面打开「为本页面启用辅助插件」', 'warn');
       return;
     }
 
